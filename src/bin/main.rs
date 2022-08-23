@@ -1,8 +1,14 @@
-use libvoir::Voir;
+mod gui;
+
+use cacao::appkit::window::{Window, WindowConfig};
+use cacao::appkit::App;
 
 fn main() {
-    let mut voir = Voir::default();
-
-    voir.open("target/debug/voir");
-    voir.hex();
+    App::new(
+        "com.EstebanBorai.voir",
+        gui::Voir {
+            window: Window::with(WindowConfig::default(), gui::VoirWindow::new()),
+        },
+    )
+    .run();
 }

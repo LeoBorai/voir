@@ -14,3 +14,4 @@ name = "voir"
 path = "src/bin/main.rs"
 
 [dependencies]
+cacao = "0.3.2"

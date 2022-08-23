@@ -48,7 +48,7 @@ impl Voir {
             position += self.bytes_per_line;
 
             if position >= 5000 {
-                panic!("Reached max pos");
+                break;
             }
         }
     }
