@@ -1,11 +1,15 @@
 mod menu;
+mod toolbar;
 
+use cacao::appkit::toolbar::Toolbar;
 use cacao::appkit::window::{Window, WindowDelegate};
 use cacao::appkit::{App, AppDelegate};
 
 use cacao::input::{TextField, TextFieldDelegate};
 use cacao::layout::{Layout, LayoutConstraint};
 use cacao::view::View;
+
+use self::toolbar::AppToolbar;
 
 pub struct Voir {
     pub(crate) window: Window<VoirWindow>,
@@ -48,6 +52,7 @@ impl TextFieldDelegate for ConsoleLogger {
 #[derive(Debug)]
 pub struct VoirWindow {
     pub(crate) input: TextField<ConsoleLogger>,
+    pub(crate) toolbar: Toolbar<AppToolbar>,
     pub(crate) content: View,
 }
 
@@ -55,6 +60,7 @@ impl VoirWindow {
     pub fn new() -> Self {
         Self {
             input: TextField::with(ConsoleLogger),
+            toolbar: Toolbar::new("com.EstebanBorai.voir.Toolbar", AppToolbar::new()),
             content: View::new(),
         }
     }
@@ -66,6 +72,7 @@ impl WindowDelegate for VoirWindow {
     fn did_load(&mut self, window: Window) {
         window.set_title("Voir");
         window.set_minimum_content_size(300., 300.);
+        window.set_toolbar(&self.toolbar);
 
         self.content.add_subview(&self.input);
         window.set_content_view(&self.content);

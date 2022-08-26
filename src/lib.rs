@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::path::Path;
 use std::str::from_utf8_unchecked;
 
 pub struct Voir {
@@ -15,7 +16,7 @@ impl Voir {
         }
     }
 
-    pub fn open(&mut self, filename: &str) {
+    pub fn open<P: AsRef<Path>>(&mut self, filename: P) {
         let file = File::open(filename).expect("Failed to open the file");
         let buffer = BufReader::new(file);
 
