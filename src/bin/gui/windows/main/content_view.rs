@@ -2,7 +2,7 @@ use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::ListView;
 use cacao::view::{View, ViewDelegate};
 
-use crate::gui::bytes_table::BytesTableView;
+use super::bytes_table::BytesTableView;
 
 #[derive(Debug)]
 pub struct ContentView {
