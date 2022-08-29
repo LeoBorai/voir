@@ -1,6 +1,8 @@
 use cacao::appkit::window::{Window, WindowConfig, WindowDelegate};
+use cacao::notification_center::Dispatcher;
 use std::sync::RwLock;
 
+use crate::gui::state::Message;
 use crate::gui::windows::main::MainWindow;
 
 #[derive(Default)]
@@ -28,5 +30,17 @@ where
 impl WindowManager {
     pub fn open_main(&self) {
         open_or_show(&self.main, || (WindowConfig::default(), MainWindow::new()))
+    }
+}
+
+impl Dispatcher for WindowManager {
+    type Message = Message;
+
+    fn on_ui_message(&self, message: Message) {
+        if let Some(main_window) = &*(self.main.read().unwrap()) {
+            if let Some(delegate) = &main_window.delegate {
+                delegate.on_message(message.clone());
+            }
+        }
     }
 }

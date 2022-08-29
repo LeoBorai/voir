@@ -6,6 +6,8 @@ use cacao::appkit::toolbar::Toolbar;
 use cacao::appkit::window::{Window, WindowDelegate};
 use cacao::view::ViewController;
 
+use crate::gui::state::Message;
+
 use self::content_view::ContentView;
 use self::toolbar::AppToolbar;
 
@@ -20,6 +22,12 @@ impl MainWindow {
         Self {
             toolbar: Toolbar::new("com.EstebanBorai.voir.Toolbar", AppToolbar::new()),
             content: ViewController::new(ContentView::default()),
+        }
+    }
+
+    pub fn on_message(&self, message: Message) {
+        if let Some(delegate) = &self.content.view.delegate {
+            delegate.on_message(message);
         }
     }
 }

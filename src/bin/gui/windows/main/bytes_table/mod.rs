@@ -4,14 +4,11 @@ use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::{ListView, ListViewDelegate, ListViewRow};
 use cacao::view::{View, ViewDelegate};
 
+use crate::gui::state::Message;
+
 const VIEW_ROW_CELL: &str = "FileContentsViewRowCell";
 
 #[derive(Debug)]
-pub enum Message {
-    OpenFile(Vec<u8>),
-}
-
-#[derive(Debug, Default)]
 pub struct BytesTableView {
     pub view: ListView,
     pub contents: Vec<u8>,
@@ -20,9 +17,16 @@ pub struct BytesTableView {
 impl BytesTableView {
     pub fn on_message(&self, message: Message) {
         match message {
-            Message::OpenFile(bytes) => {
-                println!("ON: {:?}", bytes);
-            }
+            Message::OpenFile(bytes) => {}
+        }
+    }
+}
+
+impl Default for BytesTableView {
+    fn default() -> Self {
+        Self {
+            view: ListView::default(),
+            contents: vec![0, 126, 1, 200, 93, 12],
         }
     }
 }

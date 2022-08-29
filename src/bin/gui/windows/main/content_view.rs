@@ -2,11 +2,21 @@ use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::ListView;
 use cacao::view::{View, ViewDelegate};
 
+use crate::gui::state::Message;
+
 use super::bytes_table::BytesTableView;
 
 #[derive(Debug)]
 pub struct ContentView {
     pub bytes_table_view: ListView<BytesTableView>,
+}
+
+impl ContentView {
+    pub fn on_message(&self, message: Message) {
+        if let Some(delegate) = &self.bytes_table_view.delegate {
+            delegate.on_message(message);
+        }
+    }
 }
 
 impl Default for ContentView {
