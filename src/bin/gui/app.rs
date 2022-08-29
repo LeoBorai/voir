@@ -23,6 +23,6 @@ impl Dispatcher for VoirApp {
     type Message = Message;
 
     fn on_ui_message(&self, message: Self::Message) {
-        println!("App Level Message: {:?}", message);
+        self.window_manager.on_ui_message(message);
     }
 }

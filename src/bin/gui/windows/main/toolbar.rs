@@ -31,11 +31,8 @@ impl AppToolbar {
     fn open_file(nsurls: Vec<NSURL>) {
         if let Some(first) = nsurls.get(0) {
             let pathbuf = first.pathbuf();
-            dispatch(Message::OpenFile(pathbuf.clone()));
-            let mut voir = Voir::default();
 
-            voir.open(pathbuf);
-            voir.hex();
+            dispatch(Message::OpenFile(pathbuf));
         }
     }
 

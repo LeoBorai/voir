@@ -9,6 +9,5 @@ pub enum Message {
 }
 
 pub fn dispatch(message: Message) {
-    println!("Dispatch: {:?}", message);
     App::<VoirApp, Message>::dispatch_main(message);
 }

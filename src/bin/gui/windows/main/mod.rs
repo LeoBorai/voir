@@ -40,5 +40,6 @@ impl WindowDelegate for MainWindow {
         window.set_minimum_content_size(500., 500.);
         window.set_toolbar(&self.toolbar);
         window.set_content_view_controller(&self.content);
+        window.set_movable_by_background(true);
     }
 }

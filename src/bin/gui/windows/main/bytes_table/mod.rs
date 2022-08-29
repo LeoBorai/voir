@@ -17,7 +17,11 @@ pub struct BytesTableView {
 impl BytesTableView {
     pub fn on_message(&self, message: Message) {
         match message {
-            Message::OpenFile(bytes) => {}
+            Message::OpenFile(bytes) => {
+                self.view
+                    .insert_rows(&[0], cacao::listview::RowAnimation::None);
+                self.view.set_row_actions_visible(false);
+            }
         }
     }
 }
