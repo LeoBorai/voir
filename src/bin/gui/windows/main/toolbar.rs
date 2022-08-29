@@ -5,6 +5,8 @@ use cacao::button::Button;
 use cacao::filesystem::FileSelectPanel;
 use cacao::foundation::NSURL;
 
+use crate::gui::state::{dispatch, Message};
+
 use libvoir::Voir;
 
 const OPEN_FILE: &str = "OPEN_FILE";
@@ -29,6 +31,7 @@ impl AppToolbar {
     fn open_file(nsurls: Vec<NSURL>) {
         if let Some(first) = nsurls.get(0) {
             let pathbuf = first.pathbuf();
+            dispatch(Message::OpenFile(pathbuf.clone()));
             let mut voir = Voir::default();
 
             voir.open(pathbuf);
