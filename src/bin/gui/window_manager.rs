@@ -2,7 +2,7 @@ use cacao::appkit::window::{Window, WindowConfig, WindowDelegate};
 use cacao::notification_center::Dispatcher;
 use std::sync::RwLock;
 
-use crate::gui::state::Message;
+use crate::gui::storage::Message;
 use crate::gui::windows::main::MainWindow;
 
 #[derive(Default)]

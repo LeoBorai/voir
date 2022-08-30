@@ -5,7 +5,7 @@ use cacao::button::Button;
 use cacao::filesystem::FileSelectPanel;
 use cacao::foundation::NSURL;
 
-use crate::gui::state::{dispatch, Message};
+use crate::gui::storage::{dispatch, Message};
 
 use libvoir::Voir;
 

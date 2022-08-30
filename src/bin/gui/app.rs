@@ -2,7 +2,7 @@ use cacao::appkit::{App, AppDelegate};
 use cacao::notification_center::Dispatcher;
 
 use super::menu::make_menu_options;
-use super::state::Message;
+use super::storage::Message;
 use super::window_manager::WindowManager;
 
 #[derive(Default)]

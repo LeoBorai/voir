@@ -4,7 +4,7 @@ use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::{ListView, ListViewDelegate, ListViewRow};
 use cacao::view::{View, ViewDelegate};
 
-use crate::gui::state::Message;
+use crate::gui::storage::Message;
 
 const VIEW_ROW_CELL: &str = "FileContentsViewRowCell";
 

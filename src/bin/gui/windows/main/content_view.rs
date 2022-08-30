@@ -2,7 +2,7 @@ use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::ListView;
 use cacao::view::{View, ViewDelegate};
 
-use crate::gui::state::Message;
+use crate::gui::storage::Message;
 
 use super::bytes_table::BytesTableView;
 

@@ -1,5 +1,5 @@
 pub mod app;
 pub mod menu;
-pub mod state;
+pub mod storage;
 pub mod window_manager;
 pub mod windows;

@@ -6,7 +6,7 @@ use cacao::appkit::toolbar::Toolbar;
 use cacao::appkit::window::{Window, WindowDelegate};
 use cacao::view::ViewController;
 
-use crate::gui::state::Message;
+use crate::gui::storage::Message;
 
 use self::content_view::ContentView;
 use self::toolbar::AppToolbar;
