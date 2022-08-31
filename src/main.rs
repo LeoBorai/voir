@@ -1,3 +1,4 @@
+mod fs;
 mod gui;
 
 use cacao::appkit::App;
