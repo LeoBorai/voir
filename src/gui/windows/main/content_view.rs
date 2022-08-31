@@ -28,7 +28,7 @@ impl Default for ContentView {
 }
 
 impl ViewDelegate for ContentView {
-    const NAME: &'static str = "ContentView";
+    const NAME: &'static str = "MainContentView";
 
     fn did_load(&mut self, view: View) {
         view.add_subview(&self.bytes_table_view);

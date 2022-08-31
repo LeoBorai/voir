@@ -13,15 +13,15 @@ use self::toolbar::AppToolbar;
 
 #[derive(Debug)]
 pub struct MainWindow {
-    pub(crate) toolbar: Toolbar<AppToolbar>,
     pub(crate) content: ViewController<ContentView>,
+    pub(crate) toolbar: Toolbar<AppToolbar>,
 }
 
 impl MainWindow {
     pub fn new() -> Self {
         Self {
-            toolbar: Toolbar::new("com.EstebanBorai.voir.Toolbar", AppToolbar::new()),
             content: ViewController::new(ContentView::default()),
+            toolbar: Toolbar::new("com.EstebanBorai.voir.Toolbar", AppToolbar::new()),
         }
     }
 

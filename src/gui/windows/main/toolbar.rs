@@ -7,8 +7,6 @@ use cacao::foundation::NSURL;
 
 use crate::gui::storage::{dispatch, Message};
 
-use libvoir::Voir;
-
 const OPEN_FILE: &str = "OPEN_FILE";
 
 #[derive(Debug)]
