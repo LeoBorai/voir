@@ -20,6 +20,15 @@ impl Storage {
         *state = bytes;
     }
 
+    pub fn chunks(&self) -> Vec<Vec<u8>> {
+        let bytes = self.0.borrow();
+
+        bytes
+            .chunks(16)
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<Vec<u8>>>()
+    }
+
     pub fn len(&self) -> usize {
         let state = self.0.borrow();
 

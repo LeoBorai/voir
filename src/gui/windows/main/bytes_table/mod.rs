@@ -11,6 +11,7 @@ use crate::fs::open_file;
 use crate::gui::storage::{Message, Storage};
 
 const VIEW_ROW_CELL: &str = "FileContentsViewRowCell";
+const BYTES_PER_LINE: usize = 16;
 
 #[derive(Debug)]
 pub struct BytesTableView {
@@ -33,7 +34,8 @@ impl BytesTableView {
                     .unwrap()
                     .perform_batch_updates(|listview| {
                         listview.perform_batch_updates(|listview| {
-                            let indexes = (0..self.storage.len() - 1).collect::<Vec<usize>>();
+                            let indexes =
+                                (0..self.storage.len() / BYTES_PER_LINE).collect::<Vec<usize>>();
 
                             listview.insert_rows(&indexes, RowAnimation::None);
                         });
@@ -68,15 +70,17 @@ impl ListViewDelegate for BytesTableView {
     }
 
     fn item_for(&self, row: usize) -> ListViewRow {
-        println!("ROW: {}", row);
         let mut view = self
             .view
             .as_ref()
             .unwrap()
             .dequeue::<row::TableRow>(VIEW_ROW_CELL);
+        let chunks = self.storage.chunks();
 
-        if let Some(view) = &mut view.delegate {
-            self.storage.with(row, |byte| view.configure_with(byte));
+        if let Some(chunk) = chunks.get(row) {
+            if let Some(view) = &mut view.delegate {
+                self.storage.with(row, |_| view.configure_with(chunk));
+            }
         }
 
         view.into_row()
