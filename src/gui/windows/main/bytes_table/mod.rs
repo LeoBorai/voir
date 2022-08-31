@@ -33,7 +33,9 @@ impl BytesTableView {
                     .unwrap()
                     .perform_batch_updates(|listview| {
                         listview.perform_batch_updates(|listview| {
-                            listview.insert_rows(&[0], RowAnimation::None);
+                            let indexes = (0..self.storage.len() - 1).collect::<Vec<usize>>();
+
+                            listview.insert_rows(&indexes, RowAnimation::None);
                         });
                     });
             }
@@ -66,6 +68,7 @@ impl ListViewDelegate for BytesTableView {
     }
 
     fn item_for(&self, row: usize) -> ListViewRow {
+        println!("ROW: {}", row);
         let mut view = self
             .view
             .as_ref()
