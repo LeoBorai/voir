@@ -32,8 +32,8 @@ impl Storage {
     {
         let stack = self.0.borrow();
 
-        if let Some(todo) = stack.get(row) {
-            handler(todo);
+        if let Some(byte) = stack.get(row) {
+            handler(byte);
         }
     }
 
@@ -43,12 +43,13 @@ impl Storage {
     {
         let mut state = self.0.borrow_mut();
 
-        if let Some(todo) = state.get_mut(row) {
-            handler(todo);
+        if let Some(byte) = state.get_mut(row) {
+            handler(byte);
         }
     }
 }
 
 pub fn dispatch(message: Message) {
+    println!("Dispatching Message: {:?}", message);
     App::<VoirApp, Message>::dispatch_main(message);
 }

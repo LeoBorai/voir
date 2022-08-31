@@ -1,8 +1,6 @@
 mod row;
 
-use cacao::layout::{Layout, LayoutConstraint};
 use cacao::listview::{ListView, ListViewDelegate, ListViewRow, RowAnimation};
-use cacao::view::{View, ViewDelegate};
 
 use crate::gui::storage::{Message, Storage};
 
@@ -18,13 +16,16 @@ impl BytesTableView {
     pub fn on_message(&self, message: Message) {
         match message {
             Message::OpenFile(_) => {
-                self.storage.load_bytes(vec![122, 10, 28, 19, 44]);
+                self.storage.load_bytes(vec![122]);
 
-                if let Some(view) = &self.view {
-                    view.perform_batch_updates(|listview| {
-                        listview.insert_rows(&[0], RowAnimation::SlideDown);
+                self.view
+                    .as_ref()
+                    .unwrap()
+                    .perform_batch_updates(|listview| {
+                        listview.perform_batch_updates(|listview| {
+                            listview.insert_rows(&[0], RowAnimation::SlideDown);
+                        });
                     });
-                }
             }
         }
     }
