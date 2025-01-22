@@ -1,12 +1,24 @@
-mod fs;
-mod gui;
+use std::path::PathBuf;
 
-use cacao::appkit::App;
+use anyhow::Result;
+use clap::Parser;
 
-use self::gui::app::VoirApp;
+#[derive(Debug, Parser)]
+#[command(
+    name = "voir",
+    about = "CLI Utility to Peek on Files",
+    author = "Esteban Borai <estebanborai@gmail.com> (https://github.com/EstebanBorai/voir)",
+    next_line_help = true
+)]
+pub struct Cli {
+    /// Input File
+    path: PathBuf,
+}
 
-const BUNDLE_ID: &str = "com.EstebanBorai.voir";
+fn main() -> Result<()> {
+    let args = Cli::parse();
+    let contents = std::fs::read_to_string(&args.path)?;
 
-fn main() {
-    App::new(BUNDLE_ID, VoirApp::default()).run();
+    println!("{}", contents);
+    Ok(())
 }
