@@ -1,16 +1,16 @@
 [package]
 name = "voir"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 description = "CLI Utility to Peek on Files"
 categories = ["web-programming", "network-programming"]
-homepage = "https://github.com/EstebanBorai/voir"
-repository = "https://github.com/EstebanBorai/voir"
+homepage = "https://github.com/LeoBorai/voir"
+repository = "https://github.com/LeoBorai/voir"
 readme = "README.md"
 keywords = ["voir", "less", "head", "less"]
 license = "MIT OR Apache-2.0"
-authors = ["Esteban Borai <estebanborai@gmail.com>"]
+authors = ["Leo Borai <estebanborai@gmail.com>"]
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.5", features = ["std", "derive", "env"] }
+clap = { version = "4.6", features = ["std", "derive", "env"] }

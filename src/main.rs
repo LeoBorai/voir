@@ -7,7 +7,7 @@ use clap::Parser;
 #[command(
     name = "voir",
     about = "CLI Utility to Peek on Files",
-    author = "Esteban Borai <estebanborai@gmail.com> (https://github.com/EstebanBorai/voir)",
+    author = "Leo Borai <estebanborai@gmail.com> (https://github.com/LeoBorai/voir)",
     next_line_help = true
 )]
 pub struct Cli {
