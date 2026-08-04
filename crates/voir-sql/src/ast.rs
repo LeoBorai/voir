@@ -1,15 +1,26 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Query(Query),
+    Query(Box<Query>),
     Explain(Box<Query>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
+    pub distinct: bool,
     pub projection: Vec<SelectItem>,
     pub from: TableRef,
     pub selection: Option<Expr>,
+    pub group_by: Vec<Expr>,
+    pub having: Option<Expr>,
+    pub order_by: Vec<OrderByExpr>,
     pub limit: Option<Expr>,
+    pub offset: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderByExpr {
+    pub expr: Expr,
+    pub desc: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +40,9 @@ pub struct TableRef {
 pub enum Expr {
     Ident(String),
     Literal(Literal),
+    /// Only ever legal as the sole argument of `COUNT(*)` — the parser never
+    /// produces it anywhere else.
+    Wildcard,
     BinaryOp {
         left: Box<Expr>,
         op: BinaryOperator,
@@ -37,6 +51,20 @@ pub enum Expr {
     UnaryOp {
         op: UnaryOperator,
         expr: Box<Expr>,
+    },
+    Function {
+        name: String,
+        args: Vec<Expr>,
+        distinct: bool,
+    },
+    Case {
+        operand: Option<Box<Expr>>,
+        branches: Vec<(Expr, Expr)>,
+        else_expr: Option<Box<Expr>>,
+    },
+    Cast {
+        expr: Box<Expr>,
+        type_name: String,
     },
 }
 

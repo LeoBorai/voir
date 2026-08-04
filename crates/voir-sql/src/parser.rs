@@ -1,7 +1,8 @@
 use voir_types::VoirError;
 
 use crate::ast::{
-    BinaryOperator, Expr, Literal, Query, SelectItem, Statement, TableRef, UnaryOperator,
+    BinaryOperator, Expr, Literal, OrderByExpr, Query, SelectItem, Statement, TableRef,
+    UnaryOperator,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind, describe};
@@ -81,6 +82,12 @@ impl Parser {
 
     fn parse_query(&mut self) -> Result<Query, VoirError> {
         self.expect(&TokenKind::Select, "SELECT")?;
+        let distinct = if matches!(self.peek().kind, TokenKind::Distinct) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         let projection = self.parse_select_list()?;
         self.expect(&TokenKind::From, "FROM")?;
         let from = self.parse_table_ref()?;
@@ -90,17 +97,48 @@ impl Parser {
         } else {
             None
         };
+        let group_by = if matches!(self.peek().kind, TokenKind::Group) {
+            self.advance();
+            self.expect(&TokenKind::By, "BY")?;
+            self.parse_expr_list()?
+        } else {
+            Vec::new()
+        };
+        let having = if matches!(self.peek().kind, TokenKind::Having) {
+            self.advance();
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+        let order_by = if matches!(self.peek().kind, TokenKind::Order) {
+            self.advance();
+            self.expect(&TokenKind::By, "BY")?;
+            self.parse_order_by_list()?
+        } else {
+            Vec::new()
+        };
         let limit = if matches!(self.peek().kind, TokenKind::Limit) {
             self.advance();
             Some(self.parse_expr(0)?)
         } else {
             None
         };
+        let offset = if matches!(self.peek().kind, TokenKind::Offset) {
+            self.advance();
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
         Ok(Query {
+            distinct,
             projection,
             from,
             selection,
+            group_by,
+            having,
+            order_by,
             limit,
+            offset,
         })
     }
 
@@ -111,6 +149,38 @@ impl Parser {
             items.push(self.parse_select_item()?);
         }
         Ok(items)
+    }
+
+    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, VoirError> {
+        let mut exprs = vec![self.parse_expr(0)?];
+        while matches!(self.peek().kind, TokenKind::Comma) {
+            self.advance();
+            exprs.push(self.parse_expr(0)?);
+        }
+        Ok(exprs)
+    }
+
+    fn parse_order_by_list(&mut self) -> Result<Vec<OrderByExpr>, VoirError> {
+        let mut items = vec![self.parse_order_by_item()?];
+        while matches!(self.peek().kind, TokenKind::Comma) {
+            self.advance();
+            items.push(self.parse_order_by_item()?);
+        }
+        Ok(items)
+    }
+
+    fn parse_order_by_item(&mut self) -> Result<OrderByExpr, VoirError> {
+        let expr = self.parse_expr(0)?;
+        let desc = if matches!(self.peek().kind, TokenKind::Desc) {
+            self.advance();
+            true
+        } else if matches!(self.peek().kind, TokenKind::Asc) {
+            self.advance();
+            false
+        } else {
+            false
+        };
+        Ok(OrderByExpr { expr, desc })
     }
 
     fn parse_select_item(&mut self) -> Result<SelectItem, VoirError> {
@@ -212,9 +282,98 @@ impl Parser {
             TokenKind::False => Ok(Expr::Literal(Literal::Boolean(false))),
             TokenKind::Number(text) => Ok(parse_number_literal(&text)),
             TokenKind::StringLiteral(s) => Ok(Expr::Literal(Literal::String(s))),
-            TokenKind::Ident(s) | TokenKind::QuotedIdent(s) => Ok(Expr::Ident(s)),
+            TokenKind::Case => self.parse_case(),
+            TokenKind::Cast => self.parse_cast(),
+            TokenKind::Ident(s) | TokenKind::QuotedIdent(s) => {
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.parse_function_call(s)
+                } else {
+                    Ok(Expr::Ident(s))
+                }
+            }
             other => Err(VoirError::Parse {
                 message: format!("expected expression, found {}", describe(&other)),
+                span: tok.span,
+            }),
+        }
+    }
+
+    fn parse_function_call(&mut self, name: String) -> Result<Expr, VoirError> {
+        self.expect(&TokenKind::LParen, "'('")?;
+        let distinct = if matches!(self.peek().kind, TokenKind::Distinct) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        let mut args = Vec::new();
+        if matches!(self.peek().kind, TokenKind::Star) {
+            self.advance();
+            args.push(Expr::Wildcard);
+        } else if !matches!(self.peek().kind, TokenKind::RParen) {
+            args.push(self.parse_expr(0)?);
+            while matches!(self.peek().kind, TokenKind::Comma) {
+                self.advance();
+                args.push(self.parse_expr(0)?);
+            }
+        }
+        self.expect(&TokenKind::RParen, "')'")?;
+        Ok(Expr::Function {
+            name,
+            args,
+            distinct,
+        })
+    }
+
+    fn parse_case(&mut self) -> Result<Expr, VoirError> {
+        let operand = if matches!(self.peek().kind, TokenKind::When) {
+            None
+        } else {
+            Some(Box::new(self.parse_expr(0)?))
+        };
+        let mut branches = Vec::new();
+        loop {
+            self.expect(&TokenKind::When, "WHEN")?;
+            let when = self.parse_expr(0)?;
+            self.expect(&TokenKind::Then, "THEN")?;
+            let then = self.parse_expr(0)?;
+            branches.push((when, then));
+            if !matches!(self.peek().kind, TokenKind::When) {
+                break;
+            }
+        }
+        let else_expr = if matches!(self.peek().kind, TokenKind::Else) {
+            self.advance();
+            Some(Box::new(self.parse_expr(0)?))
+        } else {
+            None
+        };
+        self.expect(&TokenKind::End, "END")?;
+        Ok(Expr::Case {
+            operand,
+            branches,
+            else_expr,
+        })
+    }
+
+    fn parse_cast(&mut self) -> Result<Expr, VoirError> {
+        self.expect(&TokenKind::LParen, "'('")?;
+        let expr = self.parse_expr(0)?;
+        self.expect(&TokenKind::As, "AS")?;
+        let type_name = self.parse_type_name()?;
+        self.expect(&TokenKind::RParen, "')'")?;
+        Ok(Expr::Cast {
+            expr: Box::new(expr),
+            type_name,
+        })
+    }
+
+    fn parse_type_name(&mut self) -> Result<String, VoirError> {
+        let tok = self.advance();
+        match tok.kind {
+            TokenKind::Ident(s) => Ok(s),
+            other => Err(VoirError::Parse {
+                message: format!("expected a type name, found {}", describe(&other)),
                 span: tok.span,
             }),
         }
@@ -359,5 +518,91 @@ mod tests {
     fn reports_expected_from() {
         let err = parse("SELECT a WEHRE b").unwrap_err();
         assert!(err.to_string().contains("expected FROM"));
+    }
+
+    #[test]
+    fn parses_group_by_having_order_by() {
+        let stmt = parse(
+            "SELECT region, COUNT(*) AS n FROM 't.csv' GROUP BY region \
+             HAVING COUNT(*) > 1 ORDER BY n DESC, region LIMIT 5 OFFSET 1",
+        )
+        .unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        assert_eq!(query.group_by, vec![Expr::Ident("region".to_string())]);
+        assert!(query.having.is_some());
+        assert_eq!(query.order_by.len(), 2);
+        assert!(query.order_by[0].desc);
+        assert!(!query.order_by[1].desc);
+        assert!(query.offset.is_some());
+    }
+
+    #[test]
+    fn parses_distinct() {
+        let stmt = parse("SELECT DISTINCT region FROM 't.csv'").unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        assert!(query.distinct);
+    }
+
+    #[test]
+    fn parses_function_call_with_star() {
+        let stmt = parse("SELECT COUNT(*) FROM 't.csv'").unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let SelectItem::Expr { expr, .. } = &query.projection[0] else {
+            panic!("expected expr")
+        };
+        assert_eq!(
+            *expr,
+            Expr::Function {
+                name: "COUNT".to_string(),
+                args: vec![Expr::Wildcard],
+                distinct: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_count_distinct() {
+        let stmt = parse("SELECT COUNT(DISTINCT region) FROM 't.csv'").unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let SelectItem::Expr { expr, .. } = &query.projection[0] else {
+            panic!("expected expr")
+        };
+        let Expr::Function { distinct, .. } = expr else {
+            panic!("expected function")
+        };
+        assert!(*distinct);
+    }
+
+    #[test]
+    fn parses_case_expression() {
+        let stmt =
+            parse("SELECT CASE WHEN a > 1 THEN 'big' ELSE 'small' END FROM 't.csv'").unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let SelectItem::Expr { expr, .. } = &query.projection[0] else {
+            panic!("expected expr")
+        };
+        assert!(matches!(expr, Expr::Case { operand: None, .. }));
+    }
+
+    #[test]
+    fn parses_cast_expression() {
+        let stmt = parse("SELECT CAST(a AS FLOAT) FROM 't.csv'").unwrap();
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let SelectItem::Expr { expr, .. } = &query.projection[0] else {
+            panic!("expected expr")
+        };
+        assert!(matches!(expr, Expr::Cast { .. }));
     }
 }

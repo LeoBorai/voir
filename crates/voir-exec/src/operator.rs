@@ -2,7 +2,10 @@ use voir_catalog::BatchStream;
 use voir_plan::LogicalPlan;
 use voir_types::{Batch, Row, SchemaRef, Value, VoirError};
 
+use crate::aggregate::AggregateOperator;
+use crate::distinct::DistinctOperator;
 use crate::expr::{EvalFn, compile};
+use crate::sort::SortOperator;
 
 pub trait Operator: Send {
     fn schema(&self) -> SchemaRef;
@@ -88,7 +91,9 @@ impl Operator for ProjectOperator {
 
 pub struct LimitOperator {
     input: Box<dyn Operator>,
-    remaining: usize,
+    skip: usize,
+    /// `None` means unbounded — `OFFSET` with no `LIMIT`.
+    remaining: Option<usize>,
 }
 
 impl Operator for LimitOperator {
@@ -97,17 +102,29 @@ impl Operator for LimitOperator {
     }
 
     fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
-        if self.remaining == 0 {
+        if self.remaining == Some(0) {
             return Ok(None);
         }
-        let Some(mut batch) = self.input.next_batch()? else {
-            return Ok(None);
-        };
-        if batch.rows.len() > self.remaining {
-            batch.rows.truncate(self.remaining);
+        loop {
+            let Some(mut batch) = self.input.next_batch()? else {
+                return Ok(None);
+            };
+            if self.skip > 0 {
+                let drop = self.skip.min(batch.rows.len());
+                batch.rows.drain(..drop);
+                self.skip -= drop;
+                if batch.rows.is_empty() {
+                    continue;
+                }
+            }
+            if let Some(remaining) = self.remaining {
+                if batch.rows.len() > remaining {
+                    batch.rows.truncate(remaining);
+                }
+                self.remaining = Some(remaining - batch.rows.len());
+            }
+            return Ok(Some(batch));
         }
-        self.remaining -= batch.rows.len();
-        Ok(Some(batch))
     }
 }
 
@@ -136,6 +153,24 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
                 predicate: compile(predicate),
             }))
         }
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            ..
+        } => {
+            let input_op = build(input)?;
+            Ok(Box::new(AggregateOperator::new(
+                input_op,
+                plan.schema(),
+                group_by,
+                aggregates.clone(),
+            )))
+        }
+        LogicalPlan::Sort { input, keys } => {
+            let input_op = build(input)?;
+            Ok(Box::new(SortOperator::new(input_op, plan.schema(), keys)))
+        }
         LogicalPlan::Projection { input, exprs } => {
             let input_op = build(input)?;
             let evaluators = exprs.iter().map(|(e, _)| compile(e)).collect();
@@ -145,10 +180,15 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
                 evaluators,
             }))
         }
-        LogicalPlan::Limit { input, fetch } => {
+        LogicalPlan::Distinct { input } => {
+            let input_op = build(input)?;
+            Ok(Box::new(DistinctOperator::new(input_op)))
+        }
+        LogicalPlan::Limit { input, skip, fetch } => {
             let input_op = build(input)?;
             Ok(Box::new(LimitOperator {
                 input: input_op,
+                skip: *skip,
                 remaining: *fetch,
             }))
         }

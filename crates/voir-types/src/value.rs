@@ -38,6 +38,81 @@ impl Value {
         matches!(self, Value::Null)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `self` is not `Int64` or `Float64`.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_f64(&self) -> Result<f64, VoirError> {
+        match self {
+            Value::Int64(v) => Ok(*v as f64),
+            Value::Float64(v) => Ok(*v),
+            other => Err(VoirError::Type(format!(
+                "expected a number, found {:?}",
+                other.data_type()
+            ))),
+        }
+    }
+
+    /// Converts `self` to `target`. `Null` casts to `Null` regardless of
+    /// target; every other conversion goes through a canonical numeric or
+    /// textual form rather than special-casing each pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a string value doesn't parse as the target type.
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn cast_to(&self, target: DataType) -> Result<Value, VoirError> {
+        if self.is_null() {
+            return Ok(Value::Null);
+        }
+        Ok(match target {
+            DataType::Null => Value::Null,
+            DataType::Boolean => Value::Boolean(match self {
+                Value::Boolean(b) => *b,
+                Value::Int64(v) | Value::Timestamp(v) => *v != 0,
+                Value::Float64(v) => *v != 0.0,
+                Value::Utf8(s) => parse_bool(s)?,
+                Value::Date(v) => *v != 0,
+                Value::Null => unreachable!("checked above"),
+            }),
+            DataType::Int64 => Value::Int64(match self {
+                Value::Int64(v) | Value::Timestamp(v) => *v,
+                Value::Float64(v) => *v as i64,
+                Value::Boolean(b) => i64::from(*b),
+                Value::Utf8(s) => s.parse().map_err(|_| cast_err(s, DataType::Int64))?,
+                Value::Date(v) => i64::from(*v),
+                Value::Null => unreachable!("checked above"),
+            }),
+            DataType::Float64 => Value::Float64(match self {
+                #[allow(clippy::cast_precision_loss)]
+                Value::Int64(v) => *v as f64,
+                Value::Float64(v) => *v,
+                Value::Boolean(b) => f64::from(*b),
+                Value::Utf8(s) => s.parse().map_err(|_| cast_err(s, DataType::Float64))?,
+                other => return Err(cast_err(&format!("{other:?}"), DataType::Float64)),
+            }),
+            DataType::Utf8 => Value::utf8(match self {
+                Value::Utf8(s) => s.to_string(),
+                Value::Boolean(b) => b.to_string(),
+                Value::Int64(v) | Value::Timestamp(v) => v.to_string(),
+                Value::Float64(v) => v.to_string(),
+                Value::Date(v) => v.to_string(),
+                Value::Null => unreachable!("checked above"),
+            }),
+            DataType::Date => Value::Date(match self {
+                Value::Date(v) => *v,
+                Value::Int64(v) => *v as i32,
+                Value::Utf8(s) => s.parse().map_err(|_| cast_err(s, DataType::Date))?,
+                other => return Err(cast_err(&format!("{other:?}"), DataType::Date)),
+            }),
+            DataType::Timestamp => Value::Timestamp(match self {
+                Value::Timestamp(v) | Value::Int64(v) => *v,
+                Value::Utf8(s) => s.parse().map_err(|_| cast_err(s, DataType::Timestamp))?,
+                other => return Err(cast_err(&format!("{other:?}"), DataType::Timestamp)),
+            }),
+        })
+    }
+
     fn as_bool_or_null(&self) -> Result<Option<bool>, VoirError> {
         match self {
             Value::Null => Ok(None),
@@ -271,6 +346,18 @@ impl Value {
     }
 }
 
+fn parse_bool(s: &str) -> Result<bool, VoirError> {
+    match s.to_ascii_lowercase().as_str() {
+        "true" | "t" | "1" => Ok(true),
+        "false" | "f" | "0" => Ok(false),
+        _ => Err(cast_err(s, DataType::Boolean)),
+    }
+}
+
+fn cast_err(raw: &str, target: DataType) -> VoirError {
+    VoirError::Type(format!("cannot cast \"{raw}\" to {target:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +437,32 @@ mod tests {
     #[test]
     fn type_mismatch_errors_instead_of_coercing() {
         assert!(Value::utf8("abc").sql_add(&Value::Int64(1)).is_err());
+    }
+
+    #[test]
+    fn cast_null_stays_null_for_any_target() {
+        assert_eq!(NULL.cast_to(DataType::Int64).unwrap(), NULL);
+        assert_eq!(NULL.cast_to(DataType::Utf8).unwrap(), NULL);
+    }
+
+    #[test]
+    fn cast_between_numeric_and_text() {
+        assert_eq!(
+            Value::Utf8("42".into()).cast_to(DataType::Int64).unwrap(),
+            Value::Int64(42)
+        );
+        assert_eq!(
+            Value::Float64(3.9).cast_to(DataType::Int64).unwrap(),
+            Value::Int64(3)
+        );
+        assert_eq!(
+            Value::Int64(7).cast_to(DataType::Utf8).unwrap(),
+            Value::utf8("7")
+        );
+    }
+
+    #[test]
+    fn cast_invalid_text_errors() {
+        assert!(Value::utf8("nope").cast_to(DataType::Int64).is_err());
     }
 }
