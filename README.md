@@ -5,19 +5,75 @@
   </h4>
 </div>
 
+[![CI](https://github.com/LeoBorai/voir/actions/workflows/ci.yml/badge.svg)](https://github.com/LeoBorai/voir/actions/workflows/ci.yml)
+
 `voir` runs SQL queries against files, starting with CSV. No schema
 declaration, no import step, no server.
 
+## Install
+
+Grab a binary from the [releases page](https://github.com/LeoBorai/voir/releases),
+or build from source:
+
+```bash
+cargo install --path crates/voir-cli
+```
+
 ## Usage
+
+### One-shot queries
 
 ```bash
 voir "SELECT region, amount FROM 'testdata/sales.csv' WHERE region = 'EU' LIMIT 5"
 voir --explain "SELECT * FROM 'testdata/sales.csv'"
+voir --format json "SELECT region, SUM(amount) AS total FROM 'testdata/sales.csv' GROUP BY region"
 ```
 
-Supported for now: `SELECT <cols|*> FROM '<file.csv>' [WHERE <predicate>] [LIMIT n]`,
-with `AND`/`OR`/`NOT`, comparisons, arithmetic, and `EXPLAIN`. See `plan.md`
-for the full roadmap.
+Flags: `--explain` (print the logical plan), `--format table|csv|tsv|json|ndjson`
+(defaults to `table` on a TTY, `csv` when piped), `--timing` (print execution time).
+Exit codes: `0` success, `1` query error.
+
+### REPL
+
+Running `voir` with no query starts an interactive session (history, multiline
+input up to a trailing `;`, tab completion for keywords/tables/columns):
+
+```bash
+$ voir
+voir> SELECT region, COUNT(*) AS n FROM 'testdata/sales.csv'
+...>  GROUP BY region ORDER BY n DESC;
+```
+
+Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
+
+| Command | Effect |
+|---|---|
+| `\open <path> [AS <name>]` | Register a file as a table |
+| `\dt` | List registered tables |
+| `\d <table>` | Describe columns and inferred types |
+| `\format <fmt>` | Switch output format |
+| `\timing` | Toggle execution timing |
+| `\explain` | Toggle plan printing |
+| `\i <file>` | Execute a `.sql` file |
+| `\o <file>` | Redirect results to a file (`\o` alone resets to stdout) |
+| `\?` | Help |
+| `\q` | Quit |
+
+### SQL support
+
+`SELECT [DISTINCT] <cols|*> FROM '<file.csv>' [WHERE <predicate>]
+[GROUP BY <exprs>] [HAVING <predicate>] [ORDER BY <exprs> [ASC|DESC]]
+[LIMIT n] [OFFSET n]`
+
+- Operators: `AND`/`OR`/`NOT`, comparisons, arithmetic (`+ - * / %`).
+- Aggregates: `COUNT(*)`, `COUNT([DISTINCT] x)`, `SUM`, `AVG`, `MIN`, `MAX`.
+- `CASE WHEN ... THEN ... [ELSE ...] END` (both simple and searched forms) and
+  `CAST(expr AS INT|FLOAT|TEXT|BOOLEAN)`.
+- Scalar functions: `UPPER`, `LOWER`, `TRIM`, `LENGTH`, `CONCAT`, `ABS`,
+  `ROUND`, `CEIL`, `FLOOR`, `POWER`, `SQRT`, `MOD`, `COALESCE`, `NULLIF`.
+- `EXPLAIN <query>` prints the logical plan instead of running it.
+
+See `plan.md` for the full roadmap (joins, subqueries, additional formats).
 
 ## Development
 
