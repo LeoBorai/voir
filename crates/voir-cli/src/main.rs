@@ -1,12 +1,17 @@
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use clap::Parser;
-use comfy_table::{Cell, CellAlignment, Table};
-use voir_catalog::{SourceRegistry, TableProvider};
-use voir_plan::{Binder, optimize};
-use voir_source_csv::CsvTableProvider;
-use voir_types::{Value, VoirError};
+
+mod completion;
+mod diagnostics;
+mod format;
+mod meta;
+mod repl;
+mod session;
+mod statement;
+
+use format::OutputFormat;
+use session::Session;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -16,71 +21,51 @@ use voir_types::{Value, VoirError};
     next_line_help = true
 )]
 struct Cli {
-    /// SQL query to run, e.g. SELECT * FROM 'sales.csv' WHERE region = 'EU'
-    query: String,
+    /// SQL query to run, e.g. SELECT * FROM 'sales.csv' WHERE region = 'EU'.
+    /// Omit to start the interactive REPL.
+    query: Option<String>,
 
-    /// Print the logical plan before running the query
+    /// Print the logical plan before running each query
     #[arg(long)]
     explain: bool,
+
+    /// Output format: table, csv, tsv, json, ndjson
+    #[arg(long)]
+    format: Option<String>,
+
+    /// Print query execution time
+    #[arg(long)]
+    timing: bool,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(&cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("error: {err}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn build_registry() -> SourceRegistry {
-    let mut registry = SourceRegistry::new();
-    registry.register("csv", |path| {
-        Ok(Arc::new(CsvTableProvider::open(path)?) as Arc<dyn TableProvider>)
-    });
-    registry
-}
-
-fn run(cli: &Cli) -> Result<(), VoirError> {
-    let registry = build_registry();
-
-    let statement = voir_sql::parse(&cli.query)?;
-    let (logical_plan, is_explain_stmt) = Binder::new(&registry).bind(&statement)?;
-    let logical_plan = optimize(logical_plan);
-
-    if cli.explain || is_explain_stmt {
-        print!("{logical_plan}");
-    }
-    if is_explain_stmt {
-        return Ok(());
-    }
-
-    let schema = logical_plan.schema();
-    let mut operator = voir_exec::build(&logical_plan)?;
-
-    let mut table = Table::new();
-    table.set_header(schema.fields.iter().map(|f| f.name.clone()));
-
-    while let Some(batch) = operator.next_batch()? {
-        for row in &batch.rows {
-            table.add_row(row.0.iter().map(render_cell));
+    let mut session = Session::new();
+    session.explain = cli.explain;
+    session.timing = cli.timing;
+    if let Some(format) = &cli.format {
+        if let Some(f) = OutputFormat::parse(format) {
+            session.format = f;
+        } else {
+            eprintln!("error: unknown format '{format}' (expected table|csv|tsv|json|ndjson)");
+            return ExitCode::from(2);
         }
     }
 
-    println!("{table}");
-    Ok(())
-}
-
-fn render_cell(value: &Value) -> Cell {
-    match value {
-        Value::Null => Cell::new("NULL"),
-        Value::Boolean(b) => Cell::new(b.to_string()),
-        Value::Int64(v) => Cell::new(v.to_string()).set_alignment(CellAlignment::Right),
-        Value::Float64(v) => Cell::new(v.to_string()).set_alignment(CellAlignment::Right),
-        Value::Utf8(s) => Cell::new(s.as_ref()),
-        Value::Date(d) => Cell::new(d.to_string()),
-        Value::Timestamp(t) => Cell::new(t.to_string()),
+    match &cli.query {
+        Some(query) => {
+            if session.execute(query) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }
+        None => match repl::run(&mut session) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::from(1)
+            }
+        },
     }
 }

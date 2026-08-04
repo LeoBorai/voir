@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use voir_catalog::SourceRegistry;
+use voir_catalog::Catalog;
 use voir_sql::{Expr, Literal, Query, SelectItem, Statement};
 use voir_types::{Schema, Value, VoirError};
 
@@ -8,13 +8,13 @@ use crate::expr::PlanExpr;
 use crate::logical::LogicalPlan;
 
 pub struct Binder<'a> {
-    registry: &'a SourceRegistry,
+    catalog: &'a Catalog,
 }
 
 impl<'a> Binder<'a> {
     #[must_use]
-    pub fn new(registry: &'a SourceRegistry) -> Self {
-        Self { registry }
+    pub fn new(catalog: &'a Catalog) -> Self {
+        Self { catalog }
     }
 
     /// Returns the bound plan and whether the statement was `EXPLAIN ...`
@@ -32,12 +32,14 @@ impl<'a> Binder<'a> {
     }
 
     fn bind_query(&self, query: &Query) -> Result<LogicalPlan, VoirError> {
-        let source = self.registry.resolve(Path::new(&query.from.path))?;
-        let table_name = query
-            .from
-            .alias
-            .clone()
-            .unwrap_or_else(|| table_name_from_path(&query.from.path));
+        let source = self.catalog.resolve(&query.from.path)?;
+        let table_name = query.from.alias.clone().unwrap_or_else(|| {
+            if self.catalog.table(&query.from.path).is_some() {
+                query.from.path.clone()
+            } else {
+                table_name_from_path(&query.from.path)
+            }
+        });
         let source_schema = source.schema();
 
         let mut plan = LogicalPlan::Scan {
@@ -55,7 +57,7 @@ impl<'a> Binder<'a> {
             };
         }
 
-        let exprs = self.bind_select_list(&query.projection, &source_schema)?;
+        let exprs = bind_select_list(&query.projection, &source_schema)?;
         plan = LogicalPlan::Projection {
             input: Box::new(plan),
             exprs,
@@ -71,35 +73,34 @@ impl<'a> Binder<'a> {
 
         Ok(plan)
     }
+}
 
-    fn bind_select_list(
-        &self,
-        items: &[SelectItem],
-        schema: &Schema,
-    ) -> Result<Vec<(PlanExpr, String)>, VoirError> {
-        let mut exprs = Vec::new();
-        for item in items {
-            match item {
-                SelectItem::Wildcard => {
-                    for (index, field) in schema.fields.iter().enumerate() {
-                        exprs.push((
-                            PlanExpr::Column {
-                                index,
-                                name: field.name.clone(),
-                            },
-                            field.name.clone(),
-                        ));
-                    }
-                }
-                SelectItem::Expr { expr, alias } => {
-                    let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
-                    let bound = bind_expr(expr, schema)?;
-                    exprs.push((bound, name));
+fn bind_select_list(
+    items: &[SelectItem],
+    schema: &Schema,
+) -> Result<Vec<(PlanExpr, String)>, VoirError> {
+    let mut exprs = Vec::new();
+    for item in items {
+        match item {
+            SelectItem::Wildcard => {
+                for (index, field) in schema.fields.iter().enumerate() {
+                    exprs.push((
+                        PlanExpr::Column {
+                            index,
+                            name: field.name.clone(),
+                        },
+                        field.name.clone(),
+                    ));
                 }
             }
+            SelectItem::Expr { expr, alias } => {
+                let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
+                let bound = bind_expr(expr, schema)?;
+                exprs.push((bound, name));
+            }
         }
-        Ok(exprs)
     }
+    Ok(exprs)
 }
 
 fn bind_expr(expr: &Expr, schema: &Schema) -> Result<PlanExpr, VoirError> {

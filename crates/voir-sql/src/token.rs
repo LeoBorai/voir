@@ -52,6 +52,12 @@ pub enum TokenKind {
     Eof,
 }
 
+/// The dialect's reserved words, exposed for completion in the REPL.
+pub const KEYWORDS: &[&str] = &[
+    "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "AS", "LIMIT", "OFFSET", "EXPLAIN", "NULL",
+    "TRUE", "FALSE",
+];
+
 impl TokenKind {
     #[must_use]
     pub fn keyword_from_str(s: &str) -> Option<TokenKind> {

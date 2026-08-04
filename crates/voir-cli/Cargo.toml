@@ -21,6 +21,11 @@ voir-exec.workspace       = true
 voir-source-csv.workspace = true
 clap.workspace            = true
 comfy-table.workspace     = true
+csv.workspace             = true
+rustyline.workspace       = true
+miette.workspace          = true
+serde_json.workspace      = true
+thiserror.workspace       = true
 
 [lints]
 workspace = true
