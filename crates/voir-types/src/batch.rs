@@ -15,10 +15,12 @@ impl Batch {
     /// batching at this size recovers it while keeping operators simple.
     pub const MAX_ROWS: usize = 1024;
 
+    #[must_use]
     pub fn new(schema: SchemaRef, rows: Vec<Row>) -> Self {
         Self { schema, rows }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }

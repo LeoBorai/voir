@@ -53,6 +53,7 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
+    #[must_use]
     pub fn keyword_from_str(s: &str) -> Option<TokenKind> {
         match s.to_ascii_uppercase().as_str() {
             "SELECT" => Some(TokenKind::Select),
@@ -88,8 +89,7 @@ pub(crate) fn describe(kind: &TokenKind) -> String {
         TokenKind::Null => "NULL".into(),
         TokenKind::True => "TRUE".into(),
         TokenKind::False => "FALSE".into(),
-        TokenKind::Ident(s) => format!("identifier `{s}`"),
-        TokenKind::QuotedIdent(s) => format!("identifier `{s}`"),
+        TokenKind::Ident(s) | TokenKind::QuotedIdent(s) => format!("identifier `{s}`"),
         TokenKind::StringLiteral(s) => format!("string '{s}'"),
         TokenKind::Number(n) => format!("number {n}"),
         TokenKind::Comma => "','".into(),

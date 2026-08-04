@@ -34,12 +34,16 @@ pub struct Schema {
 }
 
 impl Schema {
+    #[must_use]
     pub fn new(fields: Vec<Field>) -> Self {
         Self { fields }
     }
 
+    #[must_use]
     pub fn index_of(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name))
+        self.fields
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(name))
     }
 }
 

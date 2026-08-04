@@ -19,12 +19,20 @@ pub struct CsvTableProvider {
 }
 
 impl CsvTableProvider {
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened or its schema cannot be inferred.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, VoirError> {
         let path = path.into();
         let delimiter = sniff_delimiter(&path)?;
         let has_header = true;
         let schema = infer_schema(&path, delimiter, has_header)?;
-        Ok(Self { path, schema: Arc::new(schema), has_header, delimiter })
+        Ok(Self {
+            path,
+            schema: Arc::new(schema),
+            has_header,
+            delimiter,
+        })
     }
 }
 
@@ -36,7 +44,11 @@ impl TableProvider for CsvTableProvider {
     // Nothing meaningful is possible for plain CSV — there's no index to
     // consult — so filters are always returned unapplied and left to the
     // engine's Filter operator.
-    fn scan(&self, projection: Option<&[usize]>, _filters: &[FilterExpr]) -> Result<Box<dyn BatchStream>, VoirError> {
+    fn scan(
+        &self,
+        projection: Option<&[usize]>,
+        _filters: &[FilterExpr],
+    ) -> Result<Box<dyn BatchStream>, VoirError> {
         let reader = ReaderBuilder::new()
             .delimiter(self.delimiter)
             .has_headers(self.has_header)
@@ -45,7 +57,12 @@ impl TableProvider for CsvTableProvider {
 
         let output_schema: SchemaRef = match projection {
             None => self.schema.clone(),
-            Some(indices) => Arc::new(Schema::new(indices.iter().map(|&i| self.schema.fields[i].clone()).collect())),
+            Some(indices) => Arc::new(Schema::new(
+                indices
+                    .iter()
+                    .map(|&i| self.schema.fields[i].clone())
+                    .collect(),
+            )),
         };
 
         Ok(Box::new(CsvBatchStream {
@@ -69,7 +86,10 @@ impl BatchStream for CsvBatchStream {
         let mut rows = Vec::with_capacity(Batch::MAX_ROWS);
         let mut record = StringRecord::new();
         while rows.len() < Batch::MAX_ROWS {
-            let read = self.reader.read_record(&mut record).map_err(|e| VoirError::Source(e.to_string()))?;
+            let read = self
+                .reader
+                .read_record(&mut record)
+                .map_err(|e| VoirError::Source(e.to_string()))?;
             if !read {
                 break;
             }
@@ -98,9 +118,9 @@ fn parse_field(raw: Option<&str>, data_type: DataType) -> Value {
         return Value::Null;
     }
     match data_type {
-        DataType::Int64 => raw.parse::<i64>().map(Value::Int64).unwrap_or(Value::Null),
-        DataType::Float64 => raw.parse::<f64>().map(Value::Float64).unwrap_or(Value::Null),
-        DataType::Boolean => parse_bool(raw).map(Value::Boolean).unwrap_or(Value::Null),
+        DataType::Int64 => raw.parse::<i64>().map_or(Value::Null, Value::Int64),
+        DataType::Float64 => raw.parse::<f64>().map_or(Value::Null, Value::Float64),
+        DataType::Boolean => parse_bool(raw).map_or(Value::Null, Value::Boolean),
         _ => Value::utf8(raw),
     }
 }
@@ -135,7 +155,12 @@ fn infer_schema(path: &Path, delimiter: u8, has_header: bool) -> Result<Schema, 
         .map_err(|e| VoirError::Source(format!("{}: {e}", path.display())))?;
 
     let names: Vec<String> = if has_header {
-        reader.headers().map_err(|e| VoirError::Source(e.to_string()))?.iter().map(str::to_string).collect()
+        reader
+            .headers()
+            .map_err(|e| VoirError::Source(e.to_string()))?
+            .iter()
+            .map(str::to_string)
+            .collect()
     } else {
         Vec::new()
     };
@@ -143,20 +168,31 @@ fn infer_schema(path: &Path, delimiter: u8, has_header: bool) -> Result<Schema, 
     let mut samples: Vec<StringRecord> = Vec::new();
     let mut record = StringRecord::new();
     while samples.len() < SAMPLE_SIZE {
-        if !reader.read_record(&mut record).map_err(|e| VoirError::Source(e.to_string()))? {
+        if !reader
+            .read_record(&mut record)
+            .map_err(|e| VoirError::Source(e.to_string()))?
+        {
             break;
         }
         samples.push(record.clone());
     }
 
-    let num_columns = names.len().max(samples.first().map_or(0, StringRecord::len));
+    let num_columns = names
+        .len()
+        .max(samples.first().map_or(0, StringRecord::len));
     if num_columns == 0 {
-        return Err(VoirError::Source(format!("{}: empty file, cannot infer schema", path.display())));
+        return Err(VoirError::Source(format!(
+            "{}: empty file, cannot infer schema",
+            path.display()
+        )));
     }
 
     let mut fields = Vec::with_capacity(num_columns);
     for col in 0..num_columns {
-        let name = names.get(col).cloned().unwrap_or_else(|| format!("column_{}", col + 1));
+        let name = names
+            .get(col)
+            .cloned()
+            .unwrap_or_else(|| format!("column_{}", col + 1));
         let mut data_type: Option<DataType> = None;
         let mut nullable = false;
         for record in &samples {
@@ -171,7 +207,11 @@ fn infer_schema(path: &Path, delimiter: u8, has_header: bool) -> Result<Schema, 
                 Some(current) => widen(current, inferred),
             });
         }
-        fields.push(Field::new(name, data_type.unwrap_or(DataType::Utf8), nullable));
+        fields.push(Field::new(
+            name,
+            data_type.unwrap_or(DataType::Utf8),
+            nullable,
+        ));
     }
 
     Ok(Schema::new(fields))
@@ -205,7 +245,6 @@ fn widen(current: DataType, incoming: DataType) -> DataType {
     use DataType::{Float64, Int64, Utf8};
     match (current, incoming) {
         (a, b) if a == b => a,
-        (Utf8, _) | (_, Utf8) => Utf8,
         (Int64, Float64) | (Float64, Int64) => Float64,
         _ => Utf8,
     }

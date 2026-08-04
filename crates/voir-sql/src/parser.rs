@@ -1,9 +1,14 @@
 use voir_types::VoirError;
 
-use crate::ast::{BinaryOperator, Expr, Literal, Query, SelectItem, Statement, TableRef, UnaryOperator};
+use crate::ast::{
+    BinaryOperator, Expr, Literal, Query, SelectItem, Statement, TableRef, UnaryOperator,
+};
 use crate::lexer::Lexer;
-use crate::token::{describe, Token, TokenKind};
+use crate::token::{Token, TokenKind, describe};
 
+/// # Errors
+///
+/// Returns an error if `sql` fails to lex or does not parse as a valid statement.
 pub fn parse(sql: &str) -> Result<Statement, VoirError> {
     let tokens = Lexer::new(sql).tokenize()?;
     Parser::new(tokens).parse_statement()
@@ -37,8 +42,8 @@ impl Parser {
         tok
     }
 
-    fn expect(&mut self, kind: TokenKind, expected: &str) -> Result<Token, VoirError> {
-        if std::mem::discriminant(&self.peek().kind) == std::mem::discriminant(&kind) {
+    fn expect(&mut self, kind: &TokenKind, expected: &str) -> Result<Token, VoirError> {
+        if std::mem::discriminant(&self.peek().kind) == std::mem::discriminant(kind) {
             Ok(self.advance())
         } else {
             self.error(expected)
@@ -75,9 +80,9 @@ impl Parser {
     }
 
     fn parse_query(&mut self) -> Result<Query, VoirError> {
-        self.expect(TokenKind::Select, "SELECT")?;
+        self.expect(&TokenKind::Select, "SELECT")?;
         let projection = self.parse_select_list()?;
-        self.expect(TokenKind::From, "FROM")?;
+        self.expect(&TokenKind::From, "FROM")?;
         let from = self.parse_table_ref()?;
         let selection = if matches!(self.peek().kind, TokenKind::Where) {
             self.advance();
@@ -91,7 +96,12 @@ impl Parser {
         } else {
             None
         };
-        Ok(Query { projection, from, selection, limit })
+        Ok(Query {
+            projection,
+            from,
+            selection,
+            limit,
+        })
     }
 
     fn parse_select_list(&mut self) -> Result<Vec<SelectItem>, VoirError> {
@@ -153,14 +163,17 @@ impl Parser {
 
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, VoirError> {
         let mut lhs = self.parse_prefix()?;
-        loop {
-            let Some((op, l_bp, r_bp)) = infix_binding_power(&self.peek().kind) else { break };
+        while let Some((op, l_bp, r_bp)) = infix_binding_power(&self.peek().kind) {
             if l_bp < min_bp {
                 break;
             }
             self.advance();
             let rhs = self.parse_expr(r_bp)?;
-            lhs = Expr::BinaryOp { left: Box::new(lhs), op, right: Box::new(rhs) };
+            lhs = Expr::BinaryOp {
+                left: Box::new(lhs),
+                op,
+                right: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -170,19 +183,28 @@ impl Parser {
         match tok.kind {
             TokenKind::Not => {
                 let expr = self.parse_expr(NOT_BP)?;
-                Ok(Expr::UnaryOp { op: UnaryOperator::Not, expr: Box::new(expr) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOperator::Not,
+                    expr: Box::new(expr),
+                })
             }
             TokenKind::Minus => {
                 let expr = self.parse_expr(UNARY_BP)?;
-                Ok(Expr::UnaryOp { op: UnaryOperator::Negate, expr: Box::new(expr) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOperator::Negate,
+                    expr: Box::new(expr),
+                })
             }
             TokenKind::Plus => {
                 let expr = self.parse_expr(UNARY_BP)?;
-                Ok(Expr::UnaryOp { op: UnaryOperator::Plus, expr: Box::new(expr) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOperator::Plus,
+                    expr: Box::new(expr),
+                })
             }
             TokenKind::LParen => {
                 let expr = self.parse_expr(0)?;
-                self.expect(TokenKind::RParen, "')'")?;
+                self.expect(&TokenKind::RParen, "')'")?;
                 Ok(expr)
             }
             TokenKind::Null => Ok(Expr::Literal(Literal::Null)),
@@ -237,7 +259,9 @@ mod tests {
     #[test]
     fn parses_simple_select() {
         let stmt = parse("SELECT a, b FROM 'sales.csv' WHERE a = 1 LIMIT 10").unwrap();
-        let Statement::Query(query) = stmt else { panic!("expected query") };
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
         assert_eq!(query.projection.len(), 2);
         assert_eq!(query.from.path, "sales.csv");
         assert!(query.selection.is_some());
@@ -247,39 +271,82 @@ mod tests {
     #[test]
     fn parses_wildcard() {
         let stmt = parse("SELECT * FROM 'sales.csv'").unwrap();
-        let Statement::Query(query) = stmt else { panic!("expected query") };
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
         assert_eq!(query.projection, vec![SelectItem::Wildcard]);
     }
 
     #[test]
     fn and_binds_tighter_than_or() {
         let stmt = parse("SELECT * FROM 't.csv' WHERE a = 1 OR b = 2 AND c = 3").unwrap();
-        let Statement::Query(query) = stmt else { panic!("expected query") };
-        let Some(Expr::BinaryOp { op: BinaryOperator::Or, right, .. }) = query.selection else {
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let Some(Expr::BinaryOp {
+            op: BinaryOperator::Or,
+            right,
+            ..
+        }) = query.selection
+        else {
             panic!("expected top-level OR")
         };
-        assert!(matches!(*right, Expr::BinaryOp { op: BinaryOperator::And, .. }));
+        assert!(matches!(
+            *right,
+            Expr::BinaryOp {
+                op: BinaryOperator::And,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn not_binds_looser_than_comparison_tighter_than_and() {
         let stmt = parse("SELECT * FROM 't.csv' WHERE NOT a = 1 AND b = 2").unwrap();
-        let Statement::Query(query) = stmt else { panic!("expected query") };
-        let Some(Expr::BinaryOp { op: BinaryOperator::And, left, .. }) = query.selection else {
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let Some(Expr::BinaryOp {
+            op: BinaryOperator::And,
+            left,
+            ..
+        }) = query.selection
+        else {
             panic!("expected top-level AND")
         };
-        assert!(matches!(*left, Expr::UnaryOp { op: UnaryOperator::Not, .. }));
+        assert!(matches!(
+            *left,
+            Expr::UnaryOp {
+                op: UnaryOperator::Not,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn unary_minus_binds_tighter_than_multiply() {
         let stmt = parse("SELECT -2 * 3 FROM 't.csv'").unwrap();
-        let Statement::Query(query) = stmt else { panic!("expected query") };
-        let SelectItem::Expr { expr, .. } = &query.projection[0] else { panic!("expected expr") };
-        let Expr::BinaryOp { op: BinaryOperator::Multiply, left, .. } = expr else {
+        let Statement::Query(query) = stmt else {
+            panic!("expected query")
+        };
+        let SelectItem::Expr { expr, .. } = &query.projection[0] else {
+            panic!("expected expr")
+        };
+        let Expr::BinaryOp {
+            op: BinaryOperator::Multiply,
+            left,
+            ..
+        } = expr
+        else {
             panic!("expected top-level multiply")
         };
-        assert!(matches!(**left, Expr::UnaryOp { op: UnaryOperator::Negate, .. }));
+        assert!(matches!(
+            **left,
+            Expr::UnaryOp {
+                op: UnaryOperator::Negate,
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -7,6 +7,7 @@ pub struct Span {
 }
 
 impl Span {
+    #[must_use]
     pub fn new(start: u32, end: u32) -> Self {
         Self { start, end }
     }

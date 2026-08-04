@@ -16,6 +16,10 @@ pub enum CompareOp {
 pub enum FilterExpr {
     Column(usize),
     Literal(Value),
-    Compare { left: Box<FilterExpr>, op: CompareOp, right: Box<FilterExpr> },
+    Compare {
+        left: Box<FilterExpr>,
+        op: CompareOp,
+        right: Box<FilterExpr>,
+    },
     And(Box<FilterExpr>, Box<FilterExpr>),
 }

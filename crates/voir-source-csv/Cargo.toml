@@ -13,7 +13,7 @@ voir-catalog.workspace = true
 csv.workspace          = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

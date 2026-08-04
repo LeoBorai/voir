@@ -12,10 +12,16 @@ fn testdata(name: &str) -> String {
 fn selects_and_filters_a_real_file() {
     let path = testdata("sales.csv");
     let output = voir()
-        .arg(format!("SELECT region, amount FROM '{path}' WHERE region = 'EU' LIMIT 2"))
+        .arg(format!(
+            "SELECT region, amount FROM '{path}' WHERE region = 'EU' LIMIT 2"
+        ))
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("region"));
     assert!(stdout.contains("EU"));
@@ -25,8 +31,16 @@ fn selects_and_filters_a_real_file() {
 #[test]
 fn explain_prints_a_plan_without_running() {
     let path = testdata("sales.csv");
-    let output = voir().arg("--explain").arg(format!("SELECT * FROM '{path}'")).output().unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let output = voir()
+        .arg("--explain")
+        .arg(format!("SELECT * FROM '{path}'"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Scan"));
     assert!(stdout.contains("Projection"));
@@ -35,7 +49,10 @@ fn explain_prints_a_plan_without_running() {
 #[test]
 fn unknown_column_is_a_plan_error() {
     let path = testdata("sales.csv");
-    let output = voir().arg(format!("SELECT nope FROM '{path}'")).output().unwrap();
+    let output = voir()
+        .arg(format!("SELECT nope FROM '{path}'"))
+        .output()
+        .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("nope"));

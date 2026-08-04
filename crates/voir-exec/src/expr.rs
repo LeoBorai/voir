@@ -7,6 +7,7 @@ use voir_types::{Row, Value, VoirError};
 /// out of the hot loop. Highest-leverage perf decision in the engine.
 pub type EvalFn = Box<dyn Fn(&Row) -> Result<Value, VoirError> + Send>;
 
+#[must_use]
 pub fn compile(expr: &PlanExpr) -> EvalFn {
     match expr {
         PlanExpr::Column { index, .. } => {

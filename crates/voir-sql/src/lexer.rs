@@ -9,6 +9,9 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    // Span offsets are u32 by design (plan.md section 4) to keep tokens
+    // small; a SQL query anywhere near 4 GiB isn't a real scenario.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn new(src: &'a str) -> Self {
         let chars = src.char_indices().map(|(i, c)| (i as u32, c)).collect();
         Self { src, chars, pos: 0 }
@@ -46,8 +49,11 @@ impl<'a> Lexer<'a> {
         self.chars.get(self.pos + offset).map(|&(_, c)| c)
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn byte_offset(&self) -> u32 {
-        self.chars.get(self.pos).map(|&(i, _)| i).unwrap_or(self.src.len() as u32)
+        self.chars
+            .get(self.pos)
+            .map_or(self.src.len() as u32, |&(i, _)| i)
     }
 
     fn advance(&mut self) -> Option<char> {

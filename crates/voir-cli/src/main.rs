@@ -4,12 +4,17 @@ use std::sync::Arc;
 use clap::Parser;
 use comfy_table::{Cell, CellAlignment, Table};
 use voir_catalog::{SourceRegistry, TableProvider};
-use voir_plan::{optimize, Binder};
+use voir_plan::{Binder, optimize};
 use voir_source_csv::CsvTableProvider;
 use voir_types::{Value, VoirError};
 
 #[derive(Debug, Parser)]
-#[command(name = "voir", version, about = "SQL over tabular files", next_line_help = true)]
+#[command(
+    name = "voir",
+    version,
+    about = "SQL over tabular files",
+    next_line_help = true
+)]
 struct Cli {
     /// SQL query to run, e.g. SELECT * FROM 'sales.csv' WHERE region = 'EU'
     query: String,
@@ -32,7 +37,9 @@ fn main() -> ExitCode {
 
 fn build_registry() -> SourceRegistry {
     let mut registry = SourceRegistry::new();
-    registry.register("csv", |path| Ok(Arc::new(CsvTableProvider::open(path)?) as Arc<dyn TableProvider>));
+    registry.register("csv", |path| {
+        Ok(Arc::new(CsvTableProvider::open(path)?) as Arc<dyn TableProvider>)
+    });
     registry
 }
 

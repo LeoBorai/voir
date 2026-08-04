@@ -28,40 +28,57 @@ pub enum LogicalPlan {
 }
 
 impl LogicalPlan {
+    #[must_use]
     pub fn schema(&self) -> SchemaRef {
         match self {
-            LogicalPlan::Scan { source, projection, .. } => {
+            LogicalPlan::Scan {
+                source, projection, ..
+            } => {
                 let full = source.schema();
                 match projection {
                     None => full,
-                    Some(indices) => Arc::new(Schema::new(indices.iter().map(|&i| full.fields[i].clone()).collect())),
+                    Some(indices) => Arc::new(Schema::new(
+                        indices.iter().map(|&i| full.fields[i].clone()).collect(),
+                    )),
                 }
             }
-            LogicalPlan::Filter { input, .. } => input.schema(),
+            LogicalPlan::Filter { input, .. } | LogicalPlan::Limit { input, .. } => input.schema(),
             LogicalPlan::Projection { input, exprs } => {
                 let input_schema = input.schema();
                 let fields = exprs
                     .iter()
-                    .map(|(expr, name)| Field::new(name.clone(), expr.infer_type(&input_schema), true))
+                    .map(|(expr, name)| {
+                        Field::new(name.clone(), expr.infer_type(&input_schema), true)
+                    })
                     .collect();
                 Arc::new(Schema::new(fields))
             }
-            LogicalPlan::Limit { input, .. } => input.schema(),
         }
     }
 
     fn fmt_indent(&self, f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
         let pad = "  ".repeat(depth);
         match self {
-            LogicalPlan::Scan { table_name, projection, filters, .. } => {
-                writeln!(f, "{pad}Scan: {table_name} projection={projection:?} filters={filters:?}")
+            LogicalPlan::Scan {
+                table_name,
+                projection,
+                filters,
+                ..
+            } => {
+                writeln!(
+                    f,
+                    "{pad}Scan: {table_name} projection={projection:?} filters={filters:?}"
+                )
             }
             LogicalPlan::Filter { input, predicate } => {
                 writeln!(f, "{pad}Filter: {predicate}")?;
                 input.fmt_indent(f, depth + 1)
             }
             LogicalPlan::Projection { input, exprs } => {
-                let cols: Vec<String> = exprs.iter().map(|(e, name)| format!("{e} AS {name}")).collect();
+                let cols: Vec<String> = exprs
+                    .iter()
+                    .map(|(e, name)| format!("{e} AS {name}"))
+                    .collect();
                 writeln!(f, "{pad}Projection: {}", cols.join(", "))?;
                 input.fmt_indent(f, depth + 1)
             }

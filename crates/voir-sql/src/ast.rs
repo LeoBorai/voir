@@ -29,8 +29,15 @@ pub struct TableRef {
 pub enum Expr {
     Ident(String),
     Literal(Literal),
-    BinaryOp { left: Box<Expr>, op: BinaryOperator, right: Box<Expr> },
-    UnaryOp { op: UnaryOperator, expr: Box<Expr> },
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinaryOperator,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        op: UnaryOperator,
+        expr: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

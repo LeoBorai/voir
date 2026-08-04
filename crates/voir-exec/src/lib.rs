@@ -1,5 +1,5 @@
 mod expr;
 mod operator;
 
-pub use expr::{compile, EvalFn};
-pub use operator::{build, Operator};
+pub use expr::{EvalFn, compile};
+pub use operator::{Operator, build};

@@ -24,6 +24,7 @@ for the full roadmap.
 ```bash
 cargo check --workspace
 cargo nextest run --workspace
+cargo deny check
 ```
 
 ## License

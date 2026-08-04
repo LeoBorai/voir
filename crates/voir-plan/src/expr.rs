@@ -7,13 +7,24 @@ use voir_types::{DataType, Schema, Value};
 /// against a known input schema.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanExpr {
-    Column { index: usize, name: String },
+    Column {
+        index: usize,
+        name: String,
+    },
     Literal(Value),
-    BinaryOp { left: Box<PlanExpr>, op: BinaryOperator, right: Box<PlanExpr> },
-    UnaryOp { op: UnaryOperator, expr: Box<PlanExpr> },
+    BinaryOp {
+        left: Box<PlanExpr>,
+        op: BinaryOperator,
+        right: Box<PlanExpr>,
+    },
+    UnaryOp {
+        op: UnaryOperator,
+        expr: Box<PlanExpr>,
+    },
 }
 
 impl PlanExpr {
+    #[must_use]
     pub fn infer_type(&self, schema: &Schema) -> DataType {
         match self {
             PlanExpr::Column { index, .. } => schema.fields[*index].data_type,
@@ -31,7 +42,11 @@ impl PlanExpr {
                 | BinaryOperator::LtEq
                 | BinaryOperator::Gt
                 | BinaryOperator::GtEq => DataType::Boolean,
-                BinaryOperator::Plus | BinaryOperator::Minus | BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
+                BinaryOperator::Plus
+                | BinaryOperator::Minus
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+                | BinaryOperator::Modulo => {
                     let lt = left.infer_type(schema);
                     let rt = right.infer_type(schema);
                     if lt == DataType::Float64 || rt == DataType::Float64 {

@@ -20,6 +20,7 @@ impl Value {
         Value::Utf8(s.into())
     }
 
+    #[must_use]
     pub fn data_type(&self) -> DataType {
         match self {
             Value::Null => DataType::Null,
@@ -32,6 +33,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
@@ -47,6 +49,10 @@ impl Value {
         }
     }
 
+    // Only used for cross-type (Int64 vs Float64) comparison, where some
+    // precision loss above 2^53 is an accepted v1 limitation (see plan.md
+    // section 12 on Decimal being a post-v1 addition).
+    #[allow(clippy::cast_precision_loss)]
     fn as_numeric(&self) -> Option<f64> {
         match self {
             Value::Int64(v) => Some(*v as f64),
@@ -55,6 +61,9 @@ impl Value {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `self` is not a boolean or `Null`.
     pub fn sql_not(&self) -> Result<Value, VoirError> {
         match self.as_bool_or_null()? {
             None => Ok(Value::Null),
@@ -62,16 +71,25 @@ impl Value {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if `self` is not `Null`, `Int64`, or `Float64`.
     pub fn sql_negate(&self) -> Result<Value, VoirError> {
         match self {
             Value::Null => Ok(Value::Null),
             Value::Int64(v) => Ok(Value::Int64(-v)),
             Value::Float64(v) => Ok(Value::Float64(-v)),
-            other => Err(VoirError::Type(format!("cannot negate {:?}", other.data_type()))),
+            other => Err(VoirError::Type(format!(
+                "cannot negate {:?}",
+                other.data_type()
+            ))),
         }
     }
 
     // NULL AND false -> false; NULL AND true -> NULL; NULL AND NULL -> NULL.
+    /// # Errors
+    ///
+    /// Returns an error if either operand is not a boolean or `Null`.
     pub fn sql_and(&self, other: &Value) -> Result<Value, VoirError> {
         match (self.as_bool_or_null()?, other.as_bool_or_null()?) {
             (Some(false), _) | (_, Some(false)) => Ok(Value::Boolean(false)),
@@ -81,6 +99,9 @@ impl Value {
     }
 
     // NULL OR true -> true; NULL OR false -> NULL; NULL OR NULL -> NULL.
+    /// # Errors
+    ///
+    /// Returns an error if either operand is not a boolean or `Null`.
     pub fn sql_or(&self, other: &Value) -> Result<Value, VoirError> {
         match (self.as_bool_or_null()?, other.as_bool_or_null()?) {
             (Some(true), _) | (_, Some(true)) => Ok(Value::Boolean(true)),
@@ -89,33 +110,55 @@ impl Value {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_eq(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o == Ordering::Equal)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_not_eq(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o != Ordering::Equal)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_lt(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o == Ordering::Less)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_lt_eq(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o != Ordering::Greater)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_gt(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o == Ordering::Greater)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the operands are of incomparable types.
     pub fn sql_gt_eq(&self, other: &Value) -> Result<Value, VoirError> {
         self.compare(other, |o| o != Ordering::Less)
     }
 
     // NULL = NULL -> NULL, not true. Comparisons never see through Null;
     // use IS NOT DISTINCT FROM (not yet implemented) for null-safe equality.
-    fn compare(&self, other: &Value, matches_ordering: impl Fn(Ordering) -> bool) -> Result<Value, VoirError> {
+    fn compare(
+        &self,
+        other: &Value,
+        matches_ordering: impl Fn(Ordering) -> bool,
+    ) -> Result<Value, VoirError> {
         if self.is_null() || other.is_null() {
             return Ok(Value::Null);
         }
@@ -140,18 +183,30 @@ impl Value {
         Ok(Value::Boolean(matches_ordering(ordering)))
     }
 
+    /// # Errors
+    ///
+    /// Returns an error on integer overflow or a type mismatch.
     pub fn sql_add(&self, other: &Value) -> Result<Value, VoirError> {
-        self.arith(other, "+", |a, b| a + b)
+        self.checked_arith(other, "+", i64::checked_add, |a, b| a + b)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error on integer overflow or a type mismatch.
     pub fn sql_sub(&self, other: &Value) -> Result<Value, VoirError> {
-        self.arith(other, "-", |a, b| a - b)
+        self.checked_arith(other, "-", i64::checked_sub, |a, b| a - b)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error on integer overflow or a type mismatch.
     pub fn sql_mul(&self, other: &Value) -> Result<Value, VoirError> {
-        self.arith(other, "*", |a, b| a * b)
+        self.checked_arith(other, "*", i64::checked_mul, |a, b| a * b)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error on division by zero or a type mismatch.
     pub fn sql_div(&self, other: &Value) -> Result<Value, VoirError> {
         if let (Value::Int64(a), Value::Int64(b)) = (self, other) {
             if *b == 0 {
@@ -159,9 +214,12 @@ impl Value {
             }
             return Ok(Value::Int64(a / b));
         }
-        self.arith(other, "/", |a, b| a / b)
+        self.float_arith(other, "/", |a, b| a / b)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error on division by zero or a type mismatch.
     pub fn sql_rem(&self, other: &Value) -> Result<Value, VoirError> {
         if let (Value::Int64(a), Value::Int64(b)) = (self, other) {
             if *b == 0 {
@@ -169,21 +227,41 @@ impl Value {
             }
             return Ok(Value::Int64(a % b));
         }
-        self.arith(other, "%", |a, b| a % b)
+        self.float_arith(other, "%", |a, b| a % b)
     }
 
-    fn arith(&self, other: &Value, op: &str, f: impl Fn(f64, f64) -> f64) -> Result<Value, VoirError> {
+    // Int64 + Int64 stays exact i64 arithmetic (overflow errors rather than
+    // silently wrapping or losing precision through a float roundtrip);
+    // anything else promotes to Float64.
+    fn checked_arith(
+        &self,
+        other: &Value,
+        op: &str,
+        int_op: impl Fn(i64, i64) -> Option<i64>,
+        float_op: impl Fn(f64, f64) -> f64,
+    ) -> Result<Value, VoirError> {
+        if self.is_null() || other.is_null() {
+            return Ok(Value::Null);
+        }
+        if let (Value::Int64(a), Value::Int64(b)) = (self, other) {
+            return int_op(*a, *b)
+                .map(Value::Int64)
+                .ok_or_else(|| VoirError::Type(format!("integer overflow in '{op}'")));
+        }
+        self.float_arith(other, op, float_op)
+    }
+
+    fn float_arith(
+        &self,
+        other: &Value,
+        op: &str,
+        f: impl Fn(f64, f64) -> f64,
+    ) -> Result<Value, VoirError> {
         if self.is_null() || other.is_null() {
             return Ok(Value::Null);
         }
         match (self.as_numeric(), other.as_numeric()) {
-            (Some(a), Some(b)) => {
-                if matches!(self, Value::Int64(_)) && matches!(other, Value::Int64(_)) {
-                    Ok(Value::Int64(f(a, b) as i64))
-                } else {
-                    Ok(Value::Float64(f(a, b)))
-                }
-            }
+            (Some(a), Some(b)) => Ok(Value::Float64(f(a, b))),
             _ => Err(VoirError::Type(format!(
                 "cannot apply '{op}' to {:?} and {:?}",
                 self.data_type(),
@@ -244,14 +322,29 @@ mod tests {
     #[test]
     fn numeric_equality_and_ordering() {
         assert_eq!(Value::Int64(1).sql_eq(&Value::Int64(1)).unwrap(), b(true));
-        assert_eq!(Value::Int64(1).sql_eq(&Value::Float64(1.0)).unwrap(), b(true));
+        assert_eq!(
+            Value::Int64(1).sql_eq(&Value::Float64(1.0)).unwrap(),
+            b(true)
+        );
         assert_eq!(Value::Int64(1).sql_lt(&Value::Int64(2)).unwrap(), b(true));
-        assert_eq!(Value::Int64(2).sql_gt_eq(&Value::Int64(2)).unwrap(), b(true));
+        assert_eq!(
+            Value::Int64(2).sql_gt_eq(&Value::Int64(2)).unwrap(),
+            b(true)
+        );
     }
 
     #[test]
     fn division_by_zero_errors() {
         assert!(Value::Int64(1).sql_div(&Value::Int64(0)).is_err());
+    }
+
+    #[test]
+    fn integer_overflow_errors_instead_of_wrapping_or_losing_precision() {
+        assert!(Value::Int64(i64::MAX).sql_add(&Value::Int64(1)).is_err());
+        assert_eq!(
+            Value::Int64(2).sql_mul(&Value::Int64(3)).unwrap(),
+            Value::Int64(6)
+        );
     }
 
     #[test]

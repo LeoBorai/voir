@@ -11,20 +11,29 @@ authors      = ["Leo Borai <estebanborai@gmail.com>"]
 repository   = "https://github.com/LeoBorai/voir"
 
 [workspace.dependencies]
-voir-types       = { path = "crates/voir-types" }
-voir-sql         = { path = "crates/voir-sql" }
-voir-catalog     = { path = "crates/voir-catalog" }
-voir-plan        = { path = "crates/voir-plan" }
-voir-exec        = { path = "crates/voir-exec" }
-voir-source-csv  = { path = "crates/voir-source-csv" }
+voir-types       = { path = "crates/voir-types", version = "0.1.0" }
+voir-sql         = { path = "crates/voir-sql", version = "0.1.0" }
+voir-catalog     = { path = "crates/voir-catalog", version = "0.1.0" }
+voir-plan        = { path = "crates/voir-plan", version = "0.1.0" }
+voir-exec        = { path = "crates/voir-exec", version = "0.1.0" }
+voir-source-csv  = { path = "crates/voir-source-csv", version = "0.1.0" }
 
-thiserror   = "2"
-csv         = "1"
-clap        = { version = "4", features = ["derive"] }
-comfy-table = "7"
+thiserror   = "2.0.19"
+csv         = "1.4.0"
+clap        = { version = "4.6.5", features = ["derive"] }
+comfy-table = "7.2.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+# Documentation/naming noise, not correctness: writing `# Errors`/`# Panics`
+# sections on every fallible fn is boilerplate, module_name_repetitions
+# flags idiomatic names (Binder in binder.rs, Lexer in lexer.rs, ...), and
+# use_self hurts readability in large enum matches far from the impl header.
+missing_errors_doc         = "allow"
+missing_panics_doc         = "allow"
+module_name_repetitions    = "allow"
+must_use_candidate         = "allow"
+use_self                   = "allow"
