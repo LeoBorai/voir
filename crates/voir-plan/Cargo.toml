@@ -1,0 +1,16 @@
+[package]
+name         = "voir-plan"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+voir-types.workspace   = true
+voir-sql.workspace     = true
+voir-catalog.workspace = true
+
+[lints]
+workspace = true

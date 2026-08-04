@@ -1,0 +1,124 @@
+use voir_catalog::BatchStream;
+use voir_plan::LogicalPlan;
+use voir_types::{Batch, Row, SchemaRef, Value, VoirError};
+
+use crate::expr::{compile, EvalFn};
+
+pub trait Operator: Send {
+    fn schema(&self) -> SchemaRef;
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError>;
+}
+
+pub struct ScanOperator {
+    schema: SchemaRef,
+    stream: Box<dyn BatchStream>,
+}
+
+impl Operator for ScanOperator {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
+        self.stream.next_batch()
+    }
+}
+
+pub struct FilterOperator {
+    input: Box<dyn Operator>,
+    predicate: EvalFn,
+}
+
+impl Operator for FilterOperator {
+    fn schema(&self) -> SchemaRef {
+        self.input.schema()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
+        loop {
+            let Some(batch) = self.input.next_batch()? else { return Ok(None) };
+            let schema = batch.schema.clone();
+            let mut rows = Vec::new();
+            for row in batch.rows {
+                // NULL is not false, but WHERE filters the same way: only
+                // an exact `true` keeps the row.
+                if let Value::Boolean(true) = (self.predicate)(&row)? {
+                    rows.push(row);
+                }
+            }
+            if !rows.is_empty() {
+                return Ok(Some(Batch::new(schema, rows)));
+            }
+        }
+    }
+}
+
+pub struct ProjectOperator {
+    input: Box<dyn Operator>,
+    schema: SchemaRef,
+    evaluators: Vec<EvalFn>,
+}
+
+impl Operator for ProjectOperator {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
+        let Some(batch) = self.input.next_batch()? else { return Ok(None) };
+        let mut rows = Vec::with_capacity(batch.rows.len());
+        for row in &batch.rows {
+            let mut values = Vec::with_capacity(self.evaluators.len());
+            for eval in &self.evaluators {
+                values.push(eval(row)?);
+            }
+            rows.push(Row(values));
+        }
+        Ok(Some(Batch::new(self.schema.clone(), rows)))
+    }
+}
+
+pub struct LimitOperator {
+    input: Box<dyn Operator>,
+    remaining: usize,
+}
+
+impl Operator for LimitOperator {
+    fn schema(&self) -> SchemaRef {
+        self.input.schema()
+    }
+
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let Some(mut batch) = self.input.next_batch()? else { return Ok(None) };
+        if batch.rows.len() > self.remaining {
+            batch.rows.truncate(self.remaining);
+        }
+        self.remaining -= batch.rows.len();
+        Ok(Some(batch))
+    }
+}
+
+pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
+    match plan {
+        LogicalPlan::Scan { source, projection, filters, .. } => {
+            let stream = source.scan(projection.as_deref(), filters)?;
+            Ok(Box::new(ScanOperator { schema: plan.schema(), stream }))
+        }
+        LogicalPlan::Filter { input, predicate } => {
+            let input_op = build(input)?;
+            Ok(Box::new(FilterOperator { input: input_op, predicate: compile(predicate) }))
+        }
+        LogicalPlan::Projection { input, exprs } => {
+            let input_op = build(input)?;
+            let evaluators = exprs.iter().map(|(e, _)| compile(e)).collect();
+            Ok(Box::new(ProjectOperator { input: input_op, schema: plan.schema(), evaluators }))
+        }
+        LogicalPlan::Limit { input, fetch } => {
+            let input_op = build(input)?;
+            Ok(Box::new(LimitOperator { input: input_op, remaining: *fetch }))
+        }
+    }
+}

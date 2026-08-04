@@ -1,0 +1,26 @@
+[package]
+name         = "voir-cli"
+description  = "SQL over tabular files"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[[bin]]
+name = "voir"
+path = "src/main.rs"
+
+[dependencies]
+voir-types.workspace      = true
+voir-sql.workspace        = true
+voir-catalog.workspace    = true
+voir-plan.workspace       = true
+voir-exec.workspace       = true
+voir-source-csv.workspace = true
+clap.workspace            = true
+comfy-table.workspace     = true
+
+[lints]
+workspace = true

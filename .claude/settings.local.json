@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk git *)",
+      "Bash(rtk read *)",
+      "Bash(rtk ls *)",
+      "Bash(cargo --version)",
+      "Bash(rustc --version)",
+      "Bash(rm -f /app/src/main.rs)",
+      "Bash(rmdir /app/src)",
+      "Bash(mkdir -p /app/crates/voir-types/src /app/crates/voir-sql/src /app/crates/voir-catalog/src /app/crates/voir-plan/src /app/crates/voir-exec/src /app/crates/voir-source-csv/src /app/crates/voir-cli/src /app/testdata)"
+    ]
+  }
+}

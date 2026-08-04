@@ -1,0 +1,19 @@
+[package]
+name         = "voir-source-csv"
+version.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+
+[dependencies]
+voir-types.workspace   = true
+voir-catalog.workspace = true
+csv.workspace          = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
