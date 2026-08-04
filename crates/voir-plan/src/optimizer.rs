@@ -191,8 +191,9 @@ fn collect_needed_columns(plan: &LogicalPlan, needed: &mut BTreeSet<usize>) {
             }
             collect_needed_columns(input, needed);
         }
-        LogicalPlan::Distinct { input } => collect_needed_columns(input, needed),
-        LogicalPlan::Limit { input, .. } => collect_needed_columns(input, needed),
+        LogicalPlan::Distinct { input } | LogicalPlan::Limit { input, .. } => {
+            collect_needed_columns(input, needed);
+        }
     }
 }
 

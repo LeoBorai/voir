@@ -64,7 +64,7 @@ impl Parser {
             self.advance();
             Statement::Explain(Box::new(self.parse_query()?))
         } else {
-            Statement::Query(self.parse_query()?)
+            Statement::Query(Box::new(self.parse_query()?))
         };
         self.finish()?;
         Ok(statement)

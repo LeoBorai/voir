@@ -94,10 +94,9 @@ fn stringify(v: &Value) -> String {
         Value::Null => String::new(),
         Value::Utf8(s) => s.to_string(),
         Value::Boolean(b) => b.to_string(),
-        Value::Int64(n) => n.to_string(),
+        Value::Int64(n) | Value::Timestamp(n) => n.to_string(),
         Value::Float64(n) => n.to_string(),
         Value::Date(n) => n.to_string(),
-        Value::Timestamp(n) => n.to_string(),
     }
 }
 

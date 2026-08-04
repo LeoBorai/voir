@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use voir_catalog::Catalog;
-use voir_sql::{Expr, Literal, Query, SelectItem, Statement};
-use voir_types::{DataType, Schema, Value, VoirError};
+use voir_sql::{Expr, Literal, OrderByExpr, Query, SelectItem, Statement};
+use voir_types::{DataType, Schema, SchemaRef, Value, VoirError};
 
 use crate::agg::{AggExpr, AggFunc, agg_func_from_name};
 use crate::expr::{PlanExpr, ScalarFunc};
@@ -33,144 +33,19 @@ impl<'a> Binder<'a> {
     }
 
     fn bind_query(&self, query: &Query) -> Result<LogicalPlan, VoirError> {
-        let source = self.catalog.resolve(&query.from.path)?;
-        let table_name = query.from.alias.clone().unwrap_or_else(|| {
-            if self.catalog.table(&query.from.path).is_some() {
-                query.from.path.clone()
-            } else {
-                table_name_from_path(&query.from.path)
-            }
-        });
-        let source_schema = source.schema();
-
-        let mut plan = LogicalPlan::Scan {
-            table_name,
-            source,
-            projection: None,
-            filters: Vec::new(),
-        };
+        let (mut plan, source_schema) = self.bind_scan(query)?;
 
         if let Some(predicate) = &query.selection {
-            if contains_aggregate(predicate) {
-                return Err(VoirError::Plan(
-                    "aggregate functions are not allowed in WHERE (use HAVING)".into(),
-                ));
-            }
-            let predicate = bind_expr(predicate, &source_schema)?;
-            plan = LogicalPlan::Filter {
-                input: Box::new(plan),
-                predicate,
-            };
+            plan = bind_where(plan, predicate, &source_schema)?;
         }
 
-        let is_aggregate = !query.group_by.is_empty()
-            || query.projection.iter().any(
-                |item| matches!(item, SelectItem::Expr { expr, .. } if contains_aggregate(expr)),
-            )
-            || query.having.as_ref().is_some_and(contains_aggregate)
-            || query.order_by.iter().any(|o| contains_aggregate(&o.expr));
-
-        let (select_exprs, having_bound, order_keys) = if is_aggregate {
-            let group_by_names: Vec<String> =
-                query.group_by.iter().map(display_expr_name).collect();
-            let group_by_plan: Vec<PlanExpr> = query
-                .group_by
-                .iter()
-                .map(|e| bind_expr(e, &source_schema))
-                .collect::<Result<_, _>>()?;
-
-            let mut aggs: Vec<(Expr, AggExpr)> = Vec::new();
-
-            let mut select_exprs = Vec::new();
-            for item in &query.projection {
-                let (expr, alias) = match item {
-                    SelectItem::Wildcard => {
-                        return Err(VoirError::Plan(
-                            "SELECT * is not allowed with GROUP BY or aggregate functions".into(),
-                        ));
-                    }
-                    SelectItem::Expr { expr, alias } => (expr, alias),
-                };
-                let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
-                let bound = resolve_post_agg_expr(
-                    expr,
-                    &source_schema,
-                    &query.group_by,
-                    &group_by_names,
-                    &mut aggs,
-                )?;
-                select_exprs.push((bound, name));
-            }
-
-            let having_bound = query
-                .having
-                .as_ref()
-                .map(|h| {
-                    resolve_post_agg_expr(
-                        h,
-                        &source_schema,
-                        &query.group_by,
-                        &group_by_names,
-                        &mut aggs,
-                    )
-                })
-                .transpose()?;
-
-            let mut order_keys = Vec::new();
-            for item in &query.order_by {
-                let reused = match &item.expr {
-                    Expr::Ident(name) => select_exprs
-                        .iter()
-                        .find(|(_, alias)| alias.eq_ignore_ascii_case(name))
-                        .map(|(e, _)| e.clone()),
-                    _ => None,
-                };
-                let bound = match reused {
-                    Some(e) => e,
-                    None => resolve_post_agg_expr(
-                        &item.expr,
-                        &source_schema,
-                        &query.group_by,
-                        &group_by_names,
-                        &mut aggs,
-                    )?,
-                };
-                order_keys.push(SortKey {
-                    expr: bound,
-                    desc: item.desc,
-                });
-            }
-
-            plan = LogicalPlan::Aggregate {
-                input: Box::new(plan),
-                group_by: group_by_plan,
-                group_by_names,
-                aggregates: aggs.into_iter().map(|(_, a)| a).collect(),
-            };
-
-            (select_exprs, having_bound, order_keys)
+        let (select_exprs, having_bound, order_keys) = if query_is_aggregate(query) {
+            let binding = bind_aggregate_query(query, &source_schema, plan)?;
+            plan = binding.plan;
+            (binding.select_exprs, binding.having, binding.order_keys)
         } else {
             let select_exprs = bind_select_list(&query.projection, &source_schema)?;
-
-            let mut order_keys = Vec::new();
-            for item in &query.order_by {
-                let reused = match &item.expr {
-                    Expr::Ident(name) => select_exprs
-                        .iter()
-                        .find(|(_, alias)| alias.eq_ignore_ascii_case(name))
-                        .map(|(e, _)| e.clone()),
-                    _ => None,
-                };
-                let bound = match reused {
-                    Some(e) => e,
-                    None => bind_expr(&item.expr, &source_schema)?,
-                };
-                order_keys.push(SortKey {
-                    expr: bound,
-                    desc: item.desc,
-                });
-            }
-
+            let order_keys = bind_order_by_plain(&query.order_by, &select_exprs, &source_schema)?;
             (select_exprs, None, order_keys)
         };
 
@@ -199,23 +74,213 @@ impl<'a> Binder<'a> {
             };
         }
 
-        let skip = query
-            .offset
-            .as_ref()
-            .map(bind_limit_or_offset)
-            .transpose()?
-            .unwrap_or(0);
-        let fetch = query.limit.as_ref().map(bind_limit_or_offset).transpose()?;
-        if skip > 0 || fetch.is_some() {
-            plan = LogicalPlan::Limit {
-                input: Box::new(plan),
-                skip,
-                fetch,
-            };
-        }
+        apply_limit_offset(plan, query)
+    }
 
+    fn bind_scan(&self, query: &Query) -> Result<(LogicalPlan, SchemaRef), VoirError> {
+        let source = self.catalog.resolve(&query.from.path)?;
+        let table_name = query.from.alias.clone().unwrap_or_else(|| {
+            if self.catalog.table(&query.from.path).is_some() {
+                query.from.path.clone()
+            } else {
+                table_name_from_path(&query.from.path)
+            }
+        });
+        let source_schema = source.schema();
+        let plan = LogicalPlan::Scan {
+            table_name,
+            source,
+            projection: None,
+            filters: Vec::new(),
+        };
+        Ok((plan, source_schema))
+    }
+}
+
+fn bind_where(
+    plan: LogicalPlan,
+    predicate: &Expr,
+    schema: &Schema,
+) -> Result<LogicalPlan, VoirError> {
+    if contains_aggregate(predicate) {
+        return Err(VoirError::Plan(
+            "aggregate functions are not allowed in WHERE (use HAVING)".into(),
+        ));
+    }
+    let predicate = bind_expr(predicate, schema)?;
+    Ok(LogicalPlan::Filter {
+        input: Box::new(plan),
+        predicate,
+    })
+}
+
+fn apply_limit_offset(plan: LogicalPlan, query: &Query) -> Result<LogicalPlan, VoirError> {
+    let skip = query
+        .offset
+        .as_ref()
+        .map(bind_limit_or_offset)
+        .transpose()?
+        .unwrap_or(0);
+    let fetch = query.limit.as_ref().map(bind_limit_or_offset).transpose()?;
+    if skip > 0 || fetch.is_some() {
+        Ok(LogicalPlan::Limit {
+            input: Box::new(plan),
+            skip,
+            fetch,
+        })
+    } else {
         Ok(plan)
     }
+}
+
+/// Whether `query`'s `SELECT`/`HAVING`/`ORDER BY` needs whole-table or
+/// grouped aggregation — either an explicit `GROUP BY`, or an aggregate call
+/// appearing anywhere in those clauses.
+fn query_is_aggregate(query: &Query) -> bool {
+    !query.group_by.is_empty()
+        || query
+            .projection
+            .iter()
+            .any(|item| matches!(item, SelectItem::Expr { expr, .. } if contains_aggregate(expr)))
+        || query.having.as_ref().is_some_and(contains_aggregate)
+        || query.order_by.iter().any(|o| contains_aggregate(&o.expr))
+}
+
+struct AggregateBinding {
+    plan: LogicalPlan,
+    select_exprs: Vec<(PlanExpr, String)>,
+    having: Option<PlanExpr>,
+    order_keys: Vec<SortKey>,
+}
+
+fn bind_aggregate_query(
+    query: &Query,
+    schema: &Schema,
+    input: LogicalPlan,
+) -> Result<AggregateBinding, VoirError> {
+    let group_by_names: Vec<String> = query.group_by.iter().map(display_expr_name).collect();
+    let group_by_plan: Vec<PlanExpr> = query
+        .group_by
+        .iter()
+        .map(|e| bind_expr(e, schema))
+        .collect::<Result<_, _>>()?;
+
+    let mut aggs: Vec<(Expr, AggExpr)> = Vec::new();
+
+    let select_exprs = bind_aggregate_select_list(
+        &query.projection,
+        schema,
+        &query.group_by,
+        &group_by_names,
+        &mut aggs,
+    )?;
+
+    let having = query
+        .having
+        .as_ref()
+        .map(|h| resolve_post_agg_expr(h, schema, &query.group_by, &group_by_names, &mut aggs))
+        .transpose()?;
+
+    let order_keys = bind_order_by_aggregate(
+        &query.order_by,
+        &select_exprs,
+        schema,
+        &query.group_by,
+        &group_by_names,
+        &mut aggs,
+    )?;
+
+    let plan = LogicalPlan::Aggregate {
+        input: Box::new(input),
+        group_by: group_by_plan,
+        group_by_names,
+        aggregates: aggs.into_iter().map(|(_, a)| a).collect(),
+    };
+
+    Ok(AggregateBinding {
+        plan,
+        select_exprs,
+        having,
+        order_keys,
+    })
+}
+
+fn bind_aggregate_select_list(
+    items: &[SelectItem],
+    schema: &Schema,
+    group_by: &[Expr],
+    group_by_names: &[String],
+    aggs: &mut Vec<(Expr, AggExpr)>,
+) -> Result<Vec<(PlanExpr, String)>, VoirError> {
+    let mut select_exprs = Vec::new();
+    for item in items {
+        let (expr, alias) = match item {
+            SelectItem::Wildcard => {
+                return Err(VoirError::Plan(
+                    "SELECT * is not allowed with GROUP BY or aggregate functions".into(),
+                ));
+            }
+            SelectItem::Expr { expr, alias } => (expr, alias),
+        };
+        let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
+        let bound = resolve_post_agg_expr(expr, schema, group_by, group_by_names, aggs)?;
+        select_exprs.push((bound, name));
+    }
+    Ok(select_exprs)
+}
+
+/// If `expr` is a bare identifier matching a `SELECT`-list alias, reuses
+/// that item's already-bound expression — the mechanism behind `ORDER BY
+/// <alias>`, since `Sort` sits below `Projection` and never sees aliases.
+fn order_by_alias_match(expr: &Expr, select_exprs: &[(PlanExpr, String)]) -> Option<PlanExpr> {
+    match expr {
+        Expr::Ident(name) => select_exprs
+            .iter()
+            .find(|(_, alias)| alias.eq_ignore_ascii_case(name))
+            .map(|(e, _)| e.clone()),
+        _ => None,
+    }
+}
+
+fn bind_order_by_aggregate(
+    order_by: &[OrderByExpr],
+    select_exprs: &[(PlanExpr, String)],
+    schema: &Schema,
+    group_by: &[Expr],
+    group_by_names: &[String],
+    aggs: &mut Vec<(Expr, AggExpr)>,
+) -> Result<Vec<SortKey>, VoirError> {
+    let mut order_keys = Vec::new();
+    for item in order_by {
+        let bound = match order_by_alias_match(&item.expr, select_exprs) {
+            Some(e) => e,
+            None => resolve_post_agg_expr(&item.expr, schema, group_by, group_by_names, aggs)?,
+        };
+        order_keys.push(SortKey {
+            expr: bound,
+            desc: item.desc,
+        });
+    }
+    Ok(order_keys)
+}
+
+fn bind_order_by_plain(
+    order_by: &[OrderByExpr],
+    select_exprs: &[(PlanExpr, String)],
+    schema: &Schema,
+) -> Result<Vec<SortKey>, VoirError> {
+    let mut order_keys = Vec::new();
+    for item in order_by {
+        let bound = match order_by_alias_match(&item.expr, select_exprs) {
+            Some(e) => e,
+            None => bind_expr(&item.expr, schema)?,
+        };
+        order_keys.push(SortKey {
+            expr: bound,
+            desc: item.desc,
+        });
+    }
+    Ok(order_keys)
 }
 
 fn bind_select_list(
@@ -297,60 +362,16 @@ fn resolve_post_agg_expr(
             name,
             args,
             distinct,
-        } => {
-            let lower = name.to_ascii_lowercase();
-            if let Some(func) = agg_func_from_name(&lower) {
-                if let Some(existing) = aggs.iter().position(|(raw, _)| raw == expr) {
-                    let alias = aggs[existing].1.alias.clone();
-                    return Ok(PlanExpr::Column {
-                        index: group_by.len() + existing,
-                        name: alias,
-                    });
-                }
-                let arg = match args.as_slice() {
-                    [Expr::Wildcard] if func == AggFunc::Count => None,
-                    [Expr::Wildcard] => {
-                        return Err(VoirError::Plan(
-                            "'*' is only valid inside COUNT(...)".into(),
-                        ));
-                    }
-                    [single] => Some(bind_expr(single, schema)?),
-                    _ => {
-                        return Err(VoirError::Plan(format!(
-                            "{name}() takes exactly one argument"
-                        )));
-                    }
-                };
-                let alias = display_expr_name(expr);
-                let index = aggs.len();
-                aggs.push((
-                    expr.clone(),
-                    AggExpr {
-                        func,
-                        arg,
-                        distinct: *distinct,
-                        alias: alias.clone(),
-                    },
-                ));
-                return Ok(PlanExpr::Column {
-                    index: group_by.len() + index,
-                    name: alias,
-                });
-            }
-            let scalar = ScalarFunc::from_name(&lower)
-                .ok_or_else(|| VoirError::Plan(format!("unknown function \"{name}\"")))?;
-            let bound_args = args
-                .iter()
-                .map(|a| resolve_post_agg_expr(a, schema, group_by, group_by_names, aggs))
-                .collect::<Result<Vec<_>, _>>()?;
-            scalar
-                .check_arity(bound_args.len())
-                .map_err(VoirError::Plan)?;
-            Ok(PlanExpr::Function {
-                func: scalar,
-                args: bound_args,
-            })
-        }
+        } => resolve_function_in_agg_context(
+            name,
+            args,
+            *distinct,
+            expr,
+            schema,
+            group_by,
+            group_by_names,
+            aggs,
+        ),
         Expr::Ident(name) => Err(VoirError::Plan(format!(
             "column \"{name}\" must appear in the GROUP BY clause or be used in an aggregate function"
         ))),
@@ -421,6 +442,94 @@ fn resolve_post_agg_expr(
             target: parse_data_type(type_name)?,
         }),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_function_in_agg_context(
+    name: &str,
+    args: &[Expr],
+    distinct: bool,
+    raw: &Expr,
+    schema: &Schema,
+    group_by: &[Expr],
+    group_by_names: &[String],
+    aggs: &mut Vec<(Expr, AggExpr)>,
+) -> Result<PlanExpr, VoirError> {
+    let lower = name.to_ascii_lowercase();
+    if let Some(func) = agg_func_from_name(&lower) {
+        return resolve_aggregate_call(
+            func,
+            name,
+            args,
+            distinct,
+            raw,
+            schema,
+            aggs,
+            group_by.len(),
+        );
+    }
+    let scalar = ScalarFunc::from_name(&lower)
+        .ok_or_else(|| VoirError::Plan(format!("unknown function \"{name}\"")))?;
+    let bound_args = args
+        .iter()
+        .map(|a| resolve_post_agg_expr(a, schema, group_by, group_by_names, aggs))
+        .collect::<Result<Vec<_>, _>>()?;
+    scalar
+        .check_arity(bound_args.len())
+        .map_err(VoirError::Plan)?;
+    Ok(PlanExpr::Function {
+        func: scalar,
+        args: bound_args,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_aggregate_call(
+    func: AggFunc,
+    name: &str,
+    args: &[Expr],
+    distinct: bool,
+    raw: &Expr,
+    schema: &Schema,
+    aggs: &mut Vec<(Expr, AggExpr)>,
+    group_by_len: usize,
+) -> Result<PlanExpr, VoirError> {
+    if let Some(existing) = aggs.iter().position(|(r, _)| r == raw) {
+        let alias = aggs[existing].1.alias.clone();
+        return Ok(PlanExpr::Column {
+            index: group_by_len + existing,
+            name: alias,
+        });
+    }
+    let arg = match args {
+        [Expr::Wildcard] if func == AggFunc::Count => None,
+        [Expr::Wildcard] => {
+            return Err(VoirError::Plan(
+                "'*' is only valid inside COUNT(...)".into(),
+            ));
+        }
+        [single] => Some(bind_expr(single, schema)?),
+        _ => {
+            return Err(VoirError::Plan(format!(
+                "{name}() takes exactly one argument"
+            )));
+        }
+    };
+    let alias = display_expr_name(raw);
+    let index = aggs.len();
+    aggs.push((
+        raw.clone(),
+        AggExpr {
+            func,
+            arg,
+            distinct,
+            alias: alias.clone(),
+        },
+    ));
+    Ok(PlanExpr::Column {
+        index: group_by_len + index,
+        name: alias,
+    })
 }
 
 fn bind_expr(expr: &Expr, schema: &Schema) -> Result<PlanExpr, VoirError> {

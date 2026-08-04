@@ -13,7 +13,9 @@
       "Bash(rtk grep *)",
       "Bash(rtk find *)",
       "Bash(timeout 5 curl -sI https://crates.io)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(awk '/^fn resolve_post_agg_expr/{start=NR} start && /^}/{print NR-start+1; exit}' /app/crates/voir-plan/src/binder.rs)",
+      "Bash(awk '/^    fn bind_query/{start=NR} start && /^    }/{print NR-start+1; exit}' /app/crates/voir-plan/src/binder.rs)"
     ]
   }
 }

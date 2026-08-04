@@ -54,19 +54,19 @@ pub fn compile(expr: &PlanExpr) -> EvalFn {
             branches,
             else_expr,
         } => {
-            let operand_eval = operand.as_deref().map(compile);
+            let operand_compiled = operand.as_deref().map(compile);
             let branch_evals: Vec<(EvalFn, EvalFn)> = branches
                 .iter()
                 .map(|(when, then)| (compile(when), compile(then)))
                 .collect();
             let else_eval = else_expr.as_deref().map(compile);
             Box::new(move |row| {
-                let operand_val = operand_eval.as_ref().map(|e| e(row)).transpose()?;
+                let subject = operand_compiled.as_ref().map(|e| e(row)).transpose()?;
                 for (when_eval, then_eval) in &branch_evals {
                     let when_val = when_eval(row)?;
-                    let matched = match &operand_val {
-                        Some(operand_val) => {
-                            matches!(operand_val.sql_eq(&when_val)?, Value::Boolean(true))
+                    let matched = match &subject {
+                        Some(subject) => {
+                            matches!(subject.sql_eq(&when_val)?, Value::Boolean(true))
                         }
                         None => matches!(when_val, Value::Boolean(true)),
                     };
