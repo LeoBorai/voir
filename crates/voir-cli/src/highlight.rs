@@ -1,14 +1,36 @@
 use nu_ansi_term::{Color, Style};
+use reedline::{Highlighter, StyledText};
 use voir_sql::{Token, TokenKind};
+
+/// `reedline::Highlighter` over [`colorize`]. `color` is decided once at
+/// startup (TTY + `NO_COLOR`), matching the old `VoirHelper`'s behavior.
+pub struct VoirHighlighter {
+    pub color: bool,
+}
+
+impl Highlighter for VoirHighlighter {
+    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
+        if !self.color {
+            let mut out = StyledText::new();
+            out.push((Style::new(), line.to_string()));
+            return out;
+        }
+        colorize(line).unwrap_or_else(|| {
+            let mut out = StyledText::new();
+            out.push((Style::new(), line.to_string()));
+            out
+        })
+    }
+}
 
 /// Colorizes `line` by walking `voir_sql`'s token stream — the same lexer
 /// `statement::is_complete` uses, so highlighting never drifts from what the
 /// dialect actually accepts. Returns `None` on a lex error (most commonly an
 /// unterminated string while the user is still typing); the caller falls
 /// back to the raw line in that case.
-pub fn colorize(line: &str) -> Option<String> {
+pub fn colorize(line: &str) -> Option<StyledText> {
     let tokens = voir_sql::tokenize(line).ok()?;
-    let mut out = String::with_capacity(line.len() * 2);
+    let mut out = StyledText::new();
     let mut cursor = 0usize;
     for token in &tokens {
         if matches!(token.kind, TokenKind::Eof) {
@@ -18,11 +40,16 @@ pub fn colorize(line: &str) -> Option<String> {
         let end = token.span.end as usize;
         let gap = line.get(cursor..start)?;
         let text = line.get(start..end)?;
-        out.push_str(gap);
-        out.push_str(&style_for(token).paint(text).to_string());
+        if !gap.is_empty() {
+            out.push((Style::new(), gap.to_string()));
+        }
+        out.push((style_for(token), text.to_string()));
         cursor = end;
     }
-    out.push_str(line.get(cursor..)?);
+    let tail = line.get(cursor..)?;
+    if !tail.is_empty() {
+        out.push((Style::new(), tail.to_string()));
+    }
     Some(out)
 }
 
@@ -102,37 +129,30 @@ fn is_keyword(kind: &TokenKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use nu_ansi_term::Style;
+
     use super::colorize;
 
-    /// Strips ANSI SGR sequences (`\x1b[...m`) back out, for asserting the
-    /// underlying text survived styling unchanged.
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c == '\u{1b}' {
-                for c in chars.by_ref() {
-                    if c == 'm' {
-                        break;
-                    }
-                }
-                continue;
-            }
-            out.push(c);
-        }
-        out
+    /// Concatenates a `StyledText`'s segments back into plain text, for
+    /// asserting the underlying content survived styling unchanged.
+    fn plain(styled: &reedline::StyledText) -> String {
+        styled.buffer.iter().map(|(_, s)| s.as_str()).collect()
     }
 
     #[test]
     fn colorizes_keywords() {
         let out = colorize("SELECT a FROM t").expect("valid SQL colorizes");
-        assert!(out.contains("SELECT"));
-        assert!(out.contains("\u{1b}["), "expected ANSI escapes in {out:?}");
+        assert!(plain(&out).contains("SELECT"));
+        let segments: Vec<&str> = out.buffer.iter().map(|(_, s)| s.as_str()).collect();
+        assert!(
+            out.buffer.iter().any(|(style, _)| *style != Style::new()),
+            "expected at least one styled segment in {segments:?}"
+        );
     }
 
     #[test]
     fn lex_error_returns_none() {
-        assert_eq!(colorize("select * from '"), None);
+        assert!(colorize("select * from '").is_none());
     }
 
     #[test]
@@ -145,7 +165,7 @@ mod tests {
         ];
         for src in cases {
             let out = colorize(src).unwrap_or_else(|| panic!("{src:?} should colorize"));
-            assert_eq!(strip_ansi(&out), src, "round-trip mismatch for {src:?}");
+            assert_eq!(plain(&out), src, "round-trip mismatch for {src:?}");
         }
     }
 }

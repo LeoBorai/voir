@@ -8,9 +8,14 @@ mod diagnostics;
 mod format;
 mod highlight;
 mod meta;
+mod paths;
+mod prompt;
 mod repl;
+mod schema_cache;
 mod session;
 mod statement;
+mod suggest;
+mod validator;
 
 use format::OutputFormat;
 use session::Session;

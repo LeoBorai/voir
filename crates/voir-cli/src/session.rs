@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use comfy_table::Table;
@@ -18,6 +19,10 @@ pub struct Session {
     pub timing: bool,
     pub explain: bool,
     pub output: Option<PathBuf>,
+    /// Whether the REPL's completion dropdown opens on every keystroke
+    /// (`\autocomplete on|off`). Shared with the editor's `AutoMenu` so the
+    /// toggle takes effect on the very next keypress.
+    pub autocomplete: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -32,6 +37,25 @@ impl Session {
             timing: false,
             explain: false,
             output: None,
+            autocomplete: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn cmd_autocomplete(&mut self, arg: &str) {
+        match arg.trim() {
+            "on" => {
+                self.autocomplete.store(true, Ordering::Relaxed);
+                println!("autocomplete is on");
+            }
+            "off" => {
+                self.autocomplete.store(false, Ordering::Relaxed);
+                println!("autocomplete is off");
+            }
+            "" => {
+                let on = self.autocomplete.load(Ordering::Relaxed);
+                println!("autocomplete is {}", if on { "on" } else { "off" });
+            }
+            other => eprintln!("usage: \\autocomplete on|off (got '{other}')"),
         }
     }
 

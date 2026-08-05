@@ -18,6 +18,7 @@ pub fn dispatch(cmd: &str, session: &mut Session) -> bool {
         "o" => session.cmd_output(rest),
         "save" => session.cmd_save(rest),
         "load" => session.cmd_load(rest),
+        "autocomplete" => session.cmd_autocomplete(rest),
         "" => {}
         other => eprintln!("unknown command: \\{other} (try \\?)"),
     }
@@ -36,6 +37,7 @@ fn print_help() {
          \\o <file>                 Redirect results to a file (\\o to reset)\n\
          \\save <file>              Save registered tables and settings to a file\n\
          \\load <file>              Restore tables and settings from a \\save file\n\
+         \\autocomplete on|off      Toggle the completion dropdown (default: on)\n\
          \\?                        Show this help\n\
          \\q                        Quit"
     );

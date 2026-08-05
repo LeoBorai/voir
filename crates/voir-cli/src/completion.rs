@@ -1,141 +1,213 @@
-use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
-use std::io::IsTerminal;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-use rustyline::completion::{Completer, FilenameCompleter, Pair};
-use rustyline::highlight::{CmdKind, Highlighter};
-use rustyline::hint::Hinter;
-use rustyline::validate::Validator;
-use rustyline::{Context, Helper, Result as RlResult};
-use voir_sql::KEYWORDS;
+use nu_ansi_term::{Color, Style};
+use reedline::{
+    Completer, DescriptionMode, EditCommand, EditMode, Emacs, IdeMenu, KeyCode, KeyModifiers,
+    Keybindings, MenuBuilder, PromptEditMode, ReedlineEvent, ReedlineRawEvent, Span, Suggestion,
+    default_emacs_keybindings,
+};
 
-use crate::highlight;
+use crate::schema_cache::SchemaCache;
 use crate::session::Session;
+use crate::suggest::{self, Candidate, Context, Snapshot, TableSchema};
 
-/// Tab completion for the REPL: SQL keywords, registered table names, and
-/// (when a `FROM <table>` is detectable in the current line) that table's
-/// column names — plus file-path completion inside a quoted string literal.
-pub struct VoirHelper {
-    filename: FilenameCompleter,
-    tables: Vec<String>,
-    columns: HashMap<String, Vec<String>>,
-    color: bool,
+/// `reedline::Completer` adapter over `suggest.rs`: classifies, augments the
+/// snapshot with an inferred file schema when the context names an
+/// unregistered `FROM '<file>'` target, ranks, and shapes the result into
+/// `Suggestion`s the `IdeMenu` can render.
+pub struct VoirCompleter {
+    snapshot: Arc<Mutex<Snapshot>>,
+    schema_cache: SchemaCache,
 }
 
-impl VoirHelper {
-    pub fn new() -> Self {
+impl VoirCompleter {
+    #[must_use]
+    pub fn new(snapshot: Arc<Mutex<Snapshot>>) -> Self {
         Self {
-            filename: FilenameCompleter::new(),
-            tables: Vec::new(),
-            columns: HashMap::new(),
-            color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+            snapshot,
+            schema_cache: SchemaCache::default(),
         }
     }
 
-    /// Snapshots registered table/column names ahead of each `readline`
-    /// call — the editor owns the helper, so its state can't borrow the
-    /// session live.
-    pub fn refresh(&mut self, session: &Session) {
-        self.tables.clear();
-        self.columns.clear();
-        for (name, table) in session.catalog.tables() {
-            self.tables.push(name.to_string());
-            let cols = table
+    fn locked_snapshot(&self) -> Snapshot {
+        self.snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl Completer for VoirCompleter {
+    fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
+        let context = suggest::classify(line, pos);
+        match &context {
+            Context::PathLiteral { prefix } | Context::MetaArgPath { prefix } => {
+                crate::paths::complete(prefix, pos)
+            }
+            // Needs the snapshot augmented with an inferred file schema
+            // before ranking, so it can't go through the one-shot
+            // `suggest::candidates` below.
+            Context::Expression { tables } => {
+                let mut schema = self.locked_snapshot();
+                for name in tables {
+                    if schema.columns_of(name).is_some() {
+                        continue;
+                    }
+                    if let Some(columns) = self.schema_cache.columns_for(Path::new(name)) {
+                        schema.tables.push(TableSchema {
+                            name: name.clone(),
+                            columns,
+                        });
+                    }
+                }
+                let fragment = suggest::fragment(line, pos, &context);
+                let word_start = pos.saturating_sub(fragment.len());
+                suggest::rank(&context, &fragment, &schema)
+                    .into_iter()
+                    .map(|c| to_suggestion(c, word_start, pos))
+                    .collect()
+            }
+            Context::StatementStart | Context::TableRef | Context::MetaCommand => {
+                let schema = self.locked_snapshot();
+                let fragment = suggest::fragment(line, pos, &context);
+                let word_start = pos.saturating_sub(fragment.len());
+                suggest::candidates(line, pos, &schema)
+                    .into_iter()
+                    .map(|c| to_suggestion(c, word_start, pos))
+                    .collect()
+            }
+        }
+    }
+}
+
+fn to_suggestion(candidate: Candidate, word_start: usize, pos: usize) -> Suggestion {
+    Suggestion {
+        value: candidate.value.clone(),
+        display_override: Some(format!(
+            "{:<24} {}",
+            candidate.value,
+            candidate.kind.label()
+        )),
+        description: candidate.source.map(|t| format!("column of {t}")),
+        span: Span::new(word_start, pos),
+        append_whitespace: false,
+        ..Default::default()
+    }
+}
+
+/// Snapshots the catalog's table/column names — the pre-`readline` refresh
+/// `VoirHelper` used to do, now feeding the `Arc<Mutex<Snapshot>>` shared
+/// with `VoirCompleter` since `reedline` owns the completer once installed.
+#[must_use]
+pub fn snapshot_of(session: &Session) -> Snapshot {
+    let tables = session
+        .catalog
+        .tables()
+        .map(|(name, table)| TableSchema {
+            name: name.to_string(),
+            columns: table
                 .provider
                 .schema()
                 .fields
                 .iter()
                 .map(|f| f.name.clone())
-                .collect();
-            self.columns.insert(name.to_string(), cols);
-        }
-    }
-}
-
-impl Default for VoirHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Completer for VoirHelper {
-    type Candidate = Pair;
-
-    fn complete(&self, line: &str, pos: usize, ctx: &Context<'_>) -> RlResult<(usize, Vec<Pair>)> {
-        if in_quoted_string(line, pos) {
-            return self.filename.complete(line, pos, ctx);
-        }
-
-        let start = word_start(line, pos);
-        let fragment = line[start..pos].to_ascii_lowercase();
-
-        let mut candidates: Vec<String> = KEYWORDS.iter().map(|k| (*k).to_string()).collect();
-        candidates.extend(self.tables.iter().cloned());
-        if let Some(table) = from_target(&line[..pos]) {
-            if let Some(cols) = self.columns.get(&table.to_ascii_lowercase()) {
-                candidates.extend(cols.iter().cloned());
-            }
-        } else {
-            for cols in self.columns.values() {
-                candidates.extend(cols.iter().cloned());
-            }
-        }
-
-        let matches: BTreeSet<String> = candidates
-            .into_iter()
-            .filter(|c| c.to_ascii_lowercase().starts_with(&fragment))
-            .collect();
-        let pairs = matches
-            .into_iter()
-            .map(|c| Pair {
-                display: c.clone(),
-                replacement: c,
-            })
-            .collect();
-        Ok((start, pairs))
-    }
-}
-
-impl Hinter for VoirHelper {
-    type Hint = String;
-}
-
-impl Highlighter for VoirHelper {
-    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        if !self.color {
-            return Cow::Borrowed(line);
-        }
-        highlight::colorize(line).map_or(Cow::Borrowed(line), Cow::Owned)
-    }
-
-    fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
-        self.color
-    }
-}
-
-impl Validator for VoirHelper {}
-impl Helper for VoirHelper {}
-
-fn word_start(line: &str, pos: usize) -> usize {
-    line[..pos]
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1)
-}
-
-fn in_quoted_string(line: &str, pos: usize) -> bool {
-    line[..pos].chars().filter(|&c| c == '\'').count() % 2 == 1
-}
-
-/// Best-effort scan for the identifier following the most recent `FROM`
-/// before the cursor — enough to scope column completion without a full
-/// reparse of in-progress input.
-fn from_target(prefix: &str) -> Option<String> {
-    let lower = prefix.to_ascii_lowercase();
-    let idx = lower.rfind("from")?;
-    let rest = prefix[idx + 4..].trim_start();
-    let ident: String = rest
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect(),
+        })
         .collect();
-    if ident.is_empty() { None } else { Some(ident) }
+    Snapshot { tables }
+}
+
+/// The dropdown itself — a borderless box under the cursor, selected row
+/// inverted, per-row kind label from `display_override` padding since
+/// `IdeMenu` only renders a description for the *selected* row.
+#[must_use]
+pub fn menu() -> IdeMenu {
+    IdeMenu::default()
+        .with_name("completion_menu")
+        .with_max_completion_width(60)
+        .with_max_completion_height(10)
+        .with_padding(1)
+        .with_text_style(Style::new().fg(Color::White).on(Color::DarkGray))
+        .with_selected_text_style(Style::new().bold().fg(Color::Black).on(Color::LightCyan))
+        .with_description_mode(DescriptionMode::PreferRight)
+}
+
+/// `default_emacs_keybindings()` plus the bindings the dropdown needs that
+/// have no default: Tab opens/advances the menu, Down/Up fall through to
+/// history when it's closed, Alt-Enter inserts a literal newline. Enter and
+/// Esc already do the right thing (accept-or-submit, dismiss) by default.
+#[must_use]
+pub fn keybindings() -> Keybindings {
+    let mut kb = default_emacs_keybindings();
+    kb.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".into()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+    kb.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Down,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuNext, ReedlineEvent::Down]),
+    );
+    kb.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Up,
+        ReedlineEvent::UntilFound(vec![ReedlineEvent::MenuPrevious, ReedlineEvent::Up]),
+    );
+    kb.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Enter,
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+    );
+    kb
+}
+
+/// Wraps `Emacs` to open the completion menu on a bare word-character
+/// insert, not just Tab — the difference between "Tab completion in a
+/// nicer box" and a `pgcli`-style dropdown that follows every keystroke.
+/// Gated on `enabled` (`\autocomplete on|off`) and on word characters only —
+/// opening after a space or `(` would flash the full keyword list at every
+/// token boundary.
+pub struct AutoMenu {
+    inner: Emacs,
+    enabled: Arc<AtomicBool>,
+}
+
+impl AutoMenu {
+    #[must_use]
+    pub fn new(enabled: Arc<AtomicBool>) -> Self {
+        Self {
+            inner: Emacs::new(keybindings()),
+            enabled,
+        }
+    }
+}
+
+impl EditMode for AutoMenu {
+    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
+        let event = self.inner.parse_event(event);
+        if self.enabled.load(Ordering::Relaxed) && inserts_word_char(&event) {
+            ReedlineEvent::Multiple(vec![event, ReedlineEvent::Menu("completion_menu".into())])
+        } else {
+            event
+        }
+    }
+
+    fn edit_mode(&self) -> PromptEditMode {
+        self.inner.edit_mode()
+    }
+}
+
+fn inserts_word_char(event: &ReedlineEvent) -> bool {
+    match event {
+        ReedlineEvent::Edit(cmds) => cmds.iter().any(
+            |c| matches!(c, EditCommand::InsertChar(ch) if ch.is_alphanumeric() || *ch == '_'),
+        ),
+        _ => false,
+    }
 }
