@@ -42,7 +42,7 @@ pub fn agg_func_from_name(name: &str) -> Option<AggFunc> {
 /// A single aggregate computed by a `LogicalPlan::Aggregate` — `arg` is
 /// `None` only for `COUNT(*)`. `alias` names this aggregate's column in the
 /// operator's output row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct AggExpr {
     pub func: AggFunc,
     pub arg: Option<PlanExpr>,

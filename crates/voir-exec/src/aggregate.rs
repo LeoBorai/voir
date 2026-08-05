@@ -146,24 +146,29 @@ pub struct AggregateOperator {
 }
 
 impl AggregateOperator {
+    /// # Errors
+    ///
+    /// Returns an error if compiling a group-by key or aggregate argument
+    /// expression fails.
     pub fn new(
         input: Box<dyn Operator>,
         schema: SchemaRef,
         group_by: &[PlanExpr],
         aggregates: Vec<AggExpr>,
-    ) -> Self {
+    ) -> Result<Self, VoirError> {
         let arg_evals = aggregates
             .iter()
-            .map(|a| a.arg.as_ref().map(compile))
-            .collect();
-        Self {
+            .map(|a| a.arg.as_ref().map(compile).transpose())
+            .collect::<Result<_, _>>()?;
+        let group_by = group_by.iter().map(compile).collect::<Result<_, _>>()?;
+        Ok(Self {
             input,
             schema,
-            group_by: group_by.iter().map(compile).collect(),
+            group_by,
             aggregates,
             arg_evals,
             done: false,
-        }
+        })
     }
 }
 

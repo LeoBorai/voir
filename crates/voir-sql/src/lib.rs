@@ -6,7 +6,6 @@ mod lexer;
 mod parser;
 mod token;
 
-use lexer::Lexer;
 use voir_types::VoirError;
 
 pub use ast::*;
@@ -16,5 +15,5 @@ pub use token::{KEYWORDS, Token, TokenKind};
 /// Lexes `src` without parsing it — used by the REPL to detect statement
 /// boundaries (a `;` outside a string or comment) ahead of a full parse.
 pub fn tokenize(src: &str) -> Result<Vec<Token>, VoirError> {
-    Lexer::new(src).tokenize()
+    lexer::tokenize(src)
 }

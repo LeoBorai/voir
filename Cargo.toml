@@ -19,6 +19,7 @@ voir-exec        = { path = "crates/voir-exec", version = "0.1.0" }
 voir-source-csv  = { path = "crates/voir-source-csv", version = "0.1.0" }
 
 thiserror   = "2.0.19"
+nom         = "8"
 csv         = "1.4.0"
 clap        = { version = "4.6.5", features = ["derive"] }
 comfy-table = "7.2.2"

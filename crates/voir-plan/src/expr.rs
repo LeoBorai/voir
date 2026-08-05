@@ -3,9 +3,11 @@ use std::fmt;
 use voir_sql::{BinaryOperator, UnaryOperator};
 use voir_types::{DataType, Schema, Value};
 
+use crate::logical::LogicalPlan;
+
 /// A bound expression: column names have been resolved to positional indices
 /// against a known input schema, and function calls to a known `ScalarFunc`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub enum PlanExpr {
     Column {
         index: usize,
@@ -34,6 +36,27 @@ pub enum PlanExpr {
         expr: Box<PlanExpr>,
         target: DataType,
     },
+    InList {
+        expr: Box<PlanExpr>,
+        list: Vec<PlanExpr>,
+    },
+    /// Uncorrelated subquery expressions: bound as an independent, fully
+    /// self-contained `LogicalPlan` that the physical compiler drains once
+    /// (not per row) when building the enclosing expression. Referencing an
+    /// outer-query column from inside one of these fails to resolve — `voir`
+    /// does not support correlated subqueries (see plan.md M4 scope).
+    ScalarSubquery(Box<LogicalPlan>),
+    InSubquery {
+        expr: Box<PlanExpr>,
+        plan: Box<LogicalPlan>,
+    },
+    Exists(Box<LogicalPlan>),
+}
+
+impl fmt::Debug for PlanExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
 }
 
 /// The non-aggregate function library: string, math, and null-handling
@@ -187,6 +210,14 @@ impl PlanExpr {
                 .or(else_expr.as_deref())
                 .map_or(DataType::Null, |e| e.infer_type(schema)),
             PlanExpr::Cast { target, .. } => *target,
+            PlanExpr::InList { .. } | PlanExpr::Exists(_) | PlanExpr::InSubquery { .. } => {
+                DataType::Boolean
+            }
+            PlanExpr::ScalarSubquery(plan) => plan
+                .schema()
+                .fields
+                .first()
+                .map_or(DataType::Null, |f| f.data_type),
         }
     }
 }
@@ -208,6 +239,10 @@ impl fmt::Display for PlanExpr {
             }
             PlanExpr::Case { .. } => write!(f, "CASE ... END"),
             PlanExpr::Cast { expr, target } => write!(f, "CAST({expr} AS {target:?})"),
+            PlanExpr::InList { expr, list } => write!(f, "{expr} IN (<{} items>)", list.len()),
+            PlanExpr::InSubquery { expr, .. } => write!(f, "{expr} IN (<subquery>)"),
+            PlanExpr::Exists(_) => write!(f, "EXISTS (<subquery>)"),
+            PlanExpr::ScalarSubquery(_) => write!(f, "(<subquery>)"),
         }
     }
 }

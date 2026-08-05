@@ -2,16 +2,19 @@ use std::fmt;
 use std::sync::Arc;
 
 use voir_catalog::{FilterExpr, TableProvider};
+use voir_sql::{JoinType, SetOperator};
 use voir_types::{Field, Schema, SchemaRef};
 
 use crate::agg::AggExpr;
 use crate::expr::PlanExpr;
 
+#[derive(Clone)]
 pub struct SortKey {
     pub expr: PlanExpr,
     pub desc: bool,
 }
 
+#[derive(Clone)]
 pub enum LogicalPlan {
     Scan {
         table_name: String,
@@ -44,6 +47,20 @@ pub enum LogicalPlan {
         input: Box<LogicalPlan>,
         skip: usize,
         fetch: Option<usize>,
+    },
+    /// `on` is `None` only for `JoinType::Cross`; every other join type
+    /// carries a bound predicate over the concatenated left++right row.
+    Join {
+        left: Box<LogicalPlan>,
+        right: Box<LogicalPlan>,
+        join_type: JoinType,
+        on: Option<PlanExpr>,
+    },
+    SetOp {
+        left: Box<LogicalPlan>,
+        right: Box<LogicalPlan>,
+        op: SetOperator,
+        all: bool,
     },
 }
 
@@ -95,6 +112,28 @@ impl LogicalPlan {
                     .collect();
                 Arc::new(Schema::new(fields))
             }
+            LogicalPlan::Join {
+                left,
+                right,
+                join_type,
+                ..
+            } => {
+                let l = left.schema();
+                let r = right.schema();
+                let mut fields = Vec::with_capacity(l.fields.len() + r.fields.len());
+                for f in &l.fields {
+                    let nullable =
+                        f.nullable || matches!(join_type, JoinType::Right | JoinType::Full);
+                    fields.push(Field::new(f.name.clone(), f.data_type, nullable));
+                }
+                for f in &r.fields {
+                    let nullable =
+                        f.nullable || matches!(join_type, JoinType::Left | JoinType::Full);
+                    fields.push(Field::new(f.name.clone(), f.data_type, nullable));
+                }
+                Arc::new(Schema::new(fields))
+            }
+            LogicalPlan::SetOp { left, .. } => left.schema(),
         }
     }
 
@@ -158,6 +197,27 @@ impl LogicalPlan {
                 writeln!(f, "{pad}Limit: skip={skip} fetch={fetch:?}")?;
                 input.fmt_indent(f, depth + 1)
             }
+            LogicalPlan::Join {
+                left,
+                right,
+                join_type,
+                on,
+            } => {
+                let on_str = on.as_ref().map_or_else(String::new, |e| format!(" on={e}"));
+                writeln!(f, "{pad}Join: type={join_type:?}{on_str}")?;
+                left.fmt_indent(f, depth + 1)?;
+                right.fmt_indent(f, depth + 1)
+            }
+            LogicalPlan::SetOp {
+                left,
+                right,
+                op,
+                all,
+            } => {
+                writeln!(f, "{pad}SetOp: op={op:?} all={all}")?;
+                left.fmt_indent(f, depth + 1)?;
+                right.fmt_indent(f, depth + 1)
+            }
         }
     }
 }
@@ -165,5 +225,14 @@ impl LogicalPlan {
 impl fmt::Display for LogicalPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt_indent(f, 0)
+    }
+}
+
+/// Can't derive `Debug` — `Scan` holds `Arc<dyn TableProvider>`, which isn't
+/// `Debug`. Reuse `Display`'s tree rendering instead, e.g. so test code can
+/// call `.unwrap_err()` on a `Result<LogicalPlan, _>`.
+impl fmt::Debug for LogicalPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
     }
 }

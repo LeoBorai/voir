@@ -40,19 +40,29 @@ pub struct SortOperator {
 }
 
 impl SortOperator {
-    pub fn new(input: Box<dyn Operator>, schema: SchemaRef, keys: &[PlanSortKey]) -> Self {
-        Self {
-            input,
-            schema,
-            keys: keys
-                .iter()
-                .map(|k| SortKey {
-                    eval: compile(&k.expr),
+    /// # Errors
+    ///
+    /// Returns an error if compiling a sort key expression fails.
+    pub fn new(
+        input: Box<dyn Operator>,
+        schema: SchemaRef,
+        keys: &[PlanSortKey],
+    ) -> Result<Self, VoirError> {
+        let keys = keys
+            .iter()
+            .map(|k| {
+                Ok(SortKey {
+                    eval: compile(&k.expr)?,
                     desc: k.desc,
                 })
-                .collect(),
+            })
+            .collect::<Result<_, VoirError>>()?;
+        Ok(Self {
+            input,
+            schema,
+            keys,
             buffered: None,
-        }
+        })
     }
 
     fn sort_all(&mut self) -> Result<Vec<Row>, VoirError> {

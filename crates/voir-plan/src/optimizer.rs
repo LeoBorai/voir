@@ -11,9 +11,34 @@ use crate::logical::{LogicalPlan, SortKey};
 /// `LogicalPlan -> LogicalPlan` rewrite; there's no cost model or iteration
 /// to a fixed point yet, since none of the current rules can re-enable each
 /// other.
+///
+/// `push_down_projection` assumes one flat, single-scan index space rooted
+/// at the plan it's given — true for every plan shape before `Join`/`SetOp`
+/// existed. A `Join` concatenates two independently-indexed subtrees and a
+/// `SetOp` requires both branches to keep identical column positions, so
+/// when either appears anywhere in the plan, projection pushdown is skipped
+/// for the whole tree rather than risk misrewriting one side's indices.
 #[must_use]
 pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
-    push_down_projection(push_down_predicates(plan))
+    let plan = push_down_predicates(plan);
+    if contains_join_or_setop(&plan) {
+        plan
+    } else {
+        push_down_projection(plan)
+    }
+}
+
+fn contains_join_or_setop(plan: &LogicalPlan) -> bool {
+    match plan {
+        LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => true,
+        LogicalPlan::Scan { .. } => false,
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Projection { input, .. }
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Aggregate { input, .. } => contains_join_or_setop(input),
+    }
 }
 
 /// Moves simple `WHERE` conjuncts (`column <op> literal`, `AND`-joined) onto
@@ -73,6 +98,28 @@ fn push_down_predicates(plan: LogicalPlan) -> LogicalPlan {
             input: Box::new(push_down_predicates(*input)),
             skip,
             fetch,
+        },
+        LogicalPlan::Join {
+            left,
+            right,
+            join_type,
+            on,
+        } => LogicalPlan::Join {
+            left: Box::new(push_down_predicates(*left)),
+            right: Box::new(push_down_predicates(*right)),
+            join_type,
+            on,
+        },
+        LogicalPlan::SetOp {
+            left,
+            right,
+            op,
+            all,
+        } => LogicalPlan::SetOp {
+            left: Box::new(push_down_predicates(*left)),
+            right: Box::new(push_down_predicates(*right)),
+            op,
+            all,
         },
         LogicalPlan::Scan { .. } => plan,
     }
@@ -140,7 +187,7 @@ fn push_down_projection(plan: LogicalPlan) -> LogicalPlan {
 
 fn subtree_has_aggregate(plan: &LogicalPlan) -> bool {
     match plan {
-        LogicalPlan::Scan { .. } => false,
+        LogicalPlan::Scan { .. } | LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => false,
         LogicalPlan::Aggregate { .. } => true,
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Sort { input, .. }
@@ -152,7 +199,11 @@ fn subtree_has_aggregate(plan: &LogicalPlan) -> bool {
 
 fn collect_needed_columns(plan: &LogicalPlan, needed: &mut BTreeSet<usize>) {
     match plan {
-        LogicalPlan::Scan { .. } => {}
+        // `optimize` never calls this pass when a `Join`/`SetOp` is present
+        // anywhere in the plan (see its doc comment) — projection pushdown's
+        // single flat index space doesn't hold once two subtrees have been
+        // concatenated.
+        LogicalPlan::Scan { .. } | LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => {}
         LogicalPlan::Aggregate {
             input,
             group_by,
@@ -202,7 +253,7 @@ fn collect_expr_columns(expr: &PlanExpr, needed: &mut BTreeSet<usize>) {
         PlanExpr::Column { index, .. } => {
             needed.insert(*index);
         }
-        PlanExpr::Literal(_) => {}
+        PlanExpr::Literal(_) | PlanExpr::Exists(_) | PlanExpr::ScalarSubquery(_) => {}
         PlanExpr::UnaryOp { expr, .. } | PlanExpr::Cast { expr, .. } => {
             collect_expr_columns(expr, needed);
         }
@@ -231,6 +282,15 @@ fn collect_expr_columns(expr: &PlanExpr, needed: &mut BTreeSet<usize>) {
                 collect_expr_columns(else_expr, needed);
             }
         }
+        PlanExpr::InList { expr, list } => {
+            collect_expr_columns(expr, needed);
+            for item in list {
+                collect_expr_columns(item, needed);
+            }
+        }
+        // Uncorrelated: the nested plan indexes its own independent schema,
+        // contributing nothing to the outer scan's needed-column set.
+        PlanExpr::InSubquery { expr, .. } => collect_expr_columns(expr, needed),
     }
 }
 
@@ -320,6 +380,9 @@ fn rewrite(plan: LogicalPlan, indices: &[usize], remap: &HashMap<usize, usize>) 
             skip,
             fetch,
         },
+        // Unreachable in practice — see the matching arm in
+        // `collect_needed_columns`.
+        LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => plan,
     }
 }
 
@@ -359,5 +422,17 @@ fn remap_expr(expr: PlanExpr, remap: &HashMap<usize, usize>) -> PlanExpr {
             expr: Box::new(remap_expr(*expr, remap)),
             target,
         },
+        PlanExpr::InList { expr, list } => PlanExpr::InList {
+            expr: Box::new(remap_expr(*expr, remap)),
+            list: list.into_iter().map(|e| remap_expr(e, remap)).collect(),
+        },
+        // The nested plan's own indices are a separate space — untouched by
+        // the outer rewrite.
+        PlanExpr::InSubquery { expr, plan } => PlanExpr::InSubquery {
+            expr: Box::new(remap_expr(*expr, remap)),
+            plan,
+        },
+        PlanExpr::Exists(plan) => PlanExpr::Exists(plan),
+        PlanExpr::ScalarSubquery(plan) => PlanExpr::ScalarSubquery(plan),
     }
 }

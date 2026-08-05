@@ -150,7 +150,7 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
             let input_op = build(input)?;
             Ok(Box::new(FilterOperator {
                 input: input_op,
-                predicate: compile(predicate),
+                predicate: compile(predicate)?,
             }))
         }
         LogicalPlan::Aggregate {
@@ -165,15 +165,18 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
                 plan.schema(),
                 group_by,
                 aggregates.clone(),
-            )))
+            )?))
         }
         LogicalPlan::Sort { input, keys } => {
             let input_op = build(input)?;
-            Ok(Box::new(SortOperator::new(input_op, plan.schema(), keys)))
+            Ok(Box::new(SortOperator::new(input_op, plan.schema(), keys)?))
         }
         LogicalPlan::Projection { input, exprs } => {
             let input_op = build(input)?;
-            let evaluators = exprs.iter().map(|(e, _)| compile(e)).collect();
+            let evaluators = exprs
+                .iter()
+                .map(|(e, _)| compile(e))
+                .collect::<Result<_, _>>()?;
             Ok(Box::new(ProjectOperator {
                 input: input_op,
                 schema: plan.schema(),
@@ -191,6 +194,28 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
                 skip: *skip,
                 remaining: *fetch,
             }))
+        }
+        LogicalPlan::Join {
+            left,
+            right,
+            join_type,
+            on,
+        } => crate::join::build_join(left, right, *join_type, on.as_ref(), plan.schema()),
+        LogicalPlan::SetOp {
+            left,
+            right,
+            op,
+            all,
+        } => {
+            let left_op = build(left)?;
+            let right_op = build(right)?;
+            Ok(Box::new(crate::setop::SetOpOperator::new(
+                left_op,
+                right_op,
+                *op,
+                *all,
+                plan.schema(),
+            )))
         }
     }
 }
