@@ -1,12 +1,15 @@
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
+use std::io::IsTerminal;
 
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
-use rustyline::highlight::Highlighter;
+use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper, Result as RlResult};
 use voir_sql::KEYWORDS;
 
+use crate::highlight;
 use crate::session::Session;
 
 /// Tab completion for the REPL: SQL keywords, registered table names, and
@@ -16,6 +19,7 @@ pub struct VoirHelper {
     filename: FilenameCompleter,
     tables: Vec<String>,
     columns: HashMap<String, Vec<String>>,
+    color: bool,
 }
 
 impl VoirHelper {
@@ -24,6 +28,7 @@ impl VoirHelper {
             filename: FilenameCompleter::new(),
             tables: Vec::new(),
             columns: HashMap::new(),
+            color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
         }
     }
 
@@ -95,7 +100,19 @@ impl Hinter for VoirHelper {
     type Hint = String;
 }
 
-impl Highlighter for VoirHelper {}
+impl Highlighter for VoirHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        if !self.color {
+            return Cow::Borrowed(line);
+        }
+        highlight::colorize(line).map_or(Cow::Borrowed(line), Cow::Owned)
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
+        self.color
+    }
+}
+
 impl Validator for VoirHelper {}
 impl Helper for VoirHelper {}
 

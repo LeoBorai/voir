@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
+use comfy_table::presets::ASCII_MARKDOWN;
 use comfy_table::{Cell, CellAlignment, Color, Table};
 use voir_types::{Batch, SchemaRef, Value, VoirError};
 
@@ -16,6 +17,7 @@ pub enum OutputFormat {
     Tsv,
     Json,
     NdJson,
+    Markdown,
 }
 
 impl OutputFormat {
@@ -26,6 +28,7 @@ impl OutputFormat {
             "tsv" => Some(Self::Tsv),
             "json" => Some(Self::Json),
             "ndjson" => Some(Self::NdJson),
+            "markdown" | "md" => Some(Self::Markdown),
             _ => None,
         }
     }
@@ -37,6 +40,7 @@ impl OutputFormat {
             Self::Tsv => "tsv",
             Self::Json => "json",
             Self::NdJson => "ndjson",
+            Self::Markdown => "markdown",
         }
     }
 }
@@ -56,11 +60,12 @@ pub fn writer(
         None => Box::new(io::stdout()),
     };
     Ok(match format {
-        OutputFormat::Table => Box::new(TableWriter::new(schema, sink)),
+        OutputFormat::Table => Box::new(TableWriter::new(schema, sink, false)),
         OutputFormat::Csv => Box::new(DelimitedWriter::new(schema, sink, b',')?),
         OutputFormat::Tsv => Box::new(DelimitedWriter::new(schema, sink, b'\t')?),
         OutputFormat::Json => Box::new(JsonWriter::new(schema, sink, false)),
         OutputFormat::NdJson => Box::new(JsonWriter::new(schema, sink, true)),
+        OutputFormat::Markdown => Box::new(TableWriter::new(schema, sink, true)),
     })
 }
 
@@ -70,8 +75,11 @@ struct TableWriter {
 }
 
 impl TableWriter {
-    fn new(schema: &SchemaRef, sink: Box<dyn Write>) -> Self {
+    fn new(schema: &SchemaRef, sink: Box<dyn Write>, markdown: bool) -> Self {
         let mut table = Table::new();
+        if markdown {
+            table.load_preset(ASCII_MARKDOWN);
+        }
         table.set_header(schema.fields.iter().map(|f| f.name.clone()));
         Self { table, sink }
     }
