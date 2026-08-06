@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use comfy_table::Table;
@@ -18,6 +19,10 @@ pub struct Session {
     pub timing: bool,
     pub explain: bool,
     pub output: Option<PathBuf>,
+    /// Whether the REPL's completion dropdown opens on every keystroke
+    /// (`\autocomplete on|off`). Shared with the editor's `AutoMenu` so the
+    /// toggle takes effect on the very next keypress.
+    pub autocomplete: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -32,6 +37,25 @@ impl Session {
             timing: false,
             explain: false,
             output: None,
+            autocomplete: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn cmd_autocomplete(&mut self, arg: &str) {
+        match arg.trim() {
+            "on" => {
+                self.autocomplete.store(true, Ordering::Relaxed);
+                println!("autocomplete is on");
+            }
+            "off" => {
+                self.autocomplete.store(false, Ordering::Relaxed);
+                println!("autocomplete is off");
+            }
+            "" => {
+                let on = self.autocomplete.load(Ordering::Relaxed);
+                println!("autocomplete is {}", if on { "on" } else { "off" });
+            }
+            other => eprintln!("usage: \\autocomplete on|off (got '{other}')"),
         }
     }
 
@@ -145,7 +169,9 @@ impl Session {
                 self.format = f;
                 println!("format set to {}", f.name());
             }
-            None => eprintln!("unknown format '{arg}' (expected table|csv|tsv|json|ndjson)"),
+            None => {
+                eprintln!("unknown format '{arg}' (expected table|csv|tsv|json|ndjson|markdown)");
+            }
         }
     }
 
@@ -171,6 +197,101 @@ impl Session {
         }
         self.output = Some(PathBuf::from(arg));
         println!("output redirected to {arg}");
+    }
+
+    /// Snapshots registered tables and display settings to `arg` as JSON.
+    /// Only enough to rebuild the catalog is kept — no logical plans, since
+    /// `voir` re-scans files rather than caching query state.
+    pub fn cmd_save(&self, arg: &str) {
+        let path = arg.trim();
+        if path.is_empty() {
+            eprintln!("usage: \\save <file>");
+            return;
+        }
+        let mut rows: Vec<_> = self.catalog.tables().collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        let tables: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(name, reg)| {
+                serde_json::json!({
+                    "name": name,
+                    "path": reg.path.display().to_string(),
+                })
+            })
+            .collect();
+        let snapshot = serde_json::json!({
+            "version": 1,
+            "tables": tables,
+            "format": self.format.name(),
+            "timing": self.timing,
+            "explain": self.explain,
+        });
+        let text = match serde_json::to_string_pretty(&snapshot) {
+            Ok(text) => text,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return;
+            }
+        };
+        match std::fs::write(path, text) {
+            Ok(()) => println!("session saved to {path}"),
+            Err(err) => eprintln!("error: {path}: {err}"),
+        }
+    }
+
+    /// Restores tables and display settings from a `\save` snapshot. Each
+    /// table path is re-opened through the catalog rather than trusted
+    /// as-is, so a file that moved or changed since the snapshot fails
+    /// loudly per-table instead of silently serving stale data.
+    pub fn cmd_load(&mut self, arg: &str) {
+        let path = arg.trim();
+        if path.is_empty() {
+            eprintln!("usage: \\load <file>");
+            return;
+        }
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                eprintln!("error: {path}: {err}");
+                return;
+            }
+        };
+        let snapshot: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("error: {path}: {err}");
+                return;
+            }
+        };
+
+        if let Some(tables) = snapshot.get("tables").and_then(serde_json::Value::as_array) {
+            for entry in tables {
+                let name = entry.get("name").and_then(serde_json::Value::as_str);
+                let table_path = entry.get("path").and_then(serde_json::Value::as_str);
+                let (Some(name), Some(table_path)) = (name, table_path) else {
+                    continue;
+                };
+                let table_path = PathBuf::from(table_path);
+                match self.catalog.open(&table_path) {
+                    Ok(provider) => self.catalog.register_table(name, table_path, provider),
+                    Err(err) => eprintln!("error: {name}: {err}"),
+                }
+            }
+        }
+        if let Some(format) = snapshot
+            .get("format")
+            .and_then(serde_json::Value::as_str)
+            .and_then(OutputFormat::parse)
+        {
+            self.format = format;
+        }
+        if let Some(timing) = snapshot.get("timing").and_then(serde_json::Value::as_bool) {
+            self.timing = timing;
+        }
+        if let Some(explain) = snapshot.get("explain").and_then(serde_json::Value::as_bool) {
+            self.explain = explain;
+        }
+        println!("session loaded from {path}");
     }
 
     pub fn cmd_include(&mut self, arg: &str) {
