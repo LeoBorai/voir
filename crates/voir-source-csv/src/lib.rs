@@ -138,7 +138,8 @@ fn sniff_delimiter(path: &Path) -> Result<u8, VoirError> {
     let mut reader = std::io::BufReader::new(file);
     let mut first_line = String::new();
     reader.read_line(&mut first_line)?;
-    let candidates = [b',', b';', b'\t', b'|'];
+    let candidates = *b",;\t|";
+
     Ok(candidates
         .iter()
         .map(|&d| (d, first_line.bytes().filter(|&b| b == d).count()))
