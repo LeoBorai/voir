@@ -10,6 +10,8 @@
 `voir` runs SQL queries against files, starting with CSV. No schema
 declaration, no import step, no server.
 
+![demo](assets/demo.gif)
+
 ## Install
 
 Grab a binary from the [releases page](https://github.com/LeoBorai/voir/releases),
@@ -46,18 +48,18 @@ voir> SELECT region, COUNT(*) AS n FROM 'testdata/sales.csv'
 
 Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
 
-| Command | Effect |
-|---|---|
-| `\open <path> [AS <name>]` | Register a file as a table |
-| `\dt` | List registered tables |
-| `\d <table>` | Describe columns and inferred types |
-| `\format <fmt>` | Switch output format |
-| `\timing` | Toggle execution timing |
-| `\explain` | Toggle plan printing |
-| `\i <file>` | Execute a `.sql` file |
-| `\o <file>` | Redirect results to a file (`\o` alone resets to stdout) |
-| `\?` | Help |
-| `\q` | Quit |
+| Command                    | Effect                                                   |
+| -------------------------- | -------------------------------------------------------- |
+| `\open <path> [AS <name>]` | Register a file as a table                               |
+| `\dt`                      | List registered tables                                   |
+| `\d <table>`               | Describe columns and inferred types                      |
+| `\format <fmt>`            | Switch output format                                     |
+| `\timing`                  | Toggle execution timing                                  |
+| `\explain`                 | Toggle plan printing                                     |
+| `\i <file>`                | Execute a `.sql` file                                    |
+| `\o <file>`                | Redirect results to a file (`\o` alone resets to stdout) |
+| `\?`                       | Help                                                     |
+| `\q`                       | Quit                                                     |
 
 ### SQL support
 
