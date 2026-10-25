@@ -135,7 +135,7 @@ pub fn menu() -> IdeMenu {
 }
 
 /// `default_emacs_keybindings()` plus the bindings the dropdown needs that
-/// have no default: Tab opens/advances the menu, Down/Up fall through to
+/// have no default: Tab opens the menu, or accepts the hovered row once open, Down/Up fall through to
 /// history when it's closed, Alt-Enter inserts a literal newline. Enter and
 /// Esc already do the right thing (accept-or-submit, dismiss) by default.
 #[must_use]
@@ -146,7 +146,9 @@ pub fn keybindings() -> Keybindings {
         KeyCode::Tab,
         ReedlineEvent::UntilFound(vec![
             ReedlineEvent::Menu("completion_menu".into()),
-            ReedlineEvent::MenuNext,
+            // Menu already open: `Menu` is inapplicable, so Tab accepts
+            // the hovered suggestion (Enter does the same while open).
+            ReedlineEvent::Enter,
         ]),
     );
     kb.add_binding(
