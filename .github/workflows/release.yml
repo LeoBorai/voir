@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
 
-# A release is never cancelled half way: a second tag waits for the first.
 concurrency:
   group: "${{ github.workflow }}"
   cancel-in-progress: false
@@ -17,8 +16,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The installer and the binary report the workspace version, so a tag that does not match it
-  # would publish a build that calls itself something else. Refuse before building anything.
   check-tag:
     name: Check tag matches Cargo.toml version
     runs-on: ubuntu-latest
