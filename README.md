@@ -75,7 +75,7 @@ Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
 
 ### SQL support
 
-`SELECT [DISTINCT] <cols|*> FROM '<file.csv|json|jsonc>' [WHERE <predicate>]
+`SELECT [DISTINCT] <cols|*> FROM '<file.csv|json|jsonc|bson>' [WHERE <predicate>]
 [GROUP BY <exprs>] [HAVING <predicate>] [ORDER BY <exprs> [ASC|DESC]]
 [LIMIT n] [OFFSET n]`
 
