@@ -11,6 +11,7 @@ use std::time::UNIX_EPOCH;
 
 use voir_catalog::TableProvider;
 use voir_source_csv::CsvTableProvider;
+use voir_source_json::JsonTableProvider;
 
 /// `testdata/earthquakes.csv` is 5.4 MB; this leaves headroom for that
 /// fixture while still bounding the hot-path work for anything larger.
@@ -28,18 +29,16 @@ pub struct SchemaCache {
 }
 
 impl SchemaCache {
-    /// Column names for `path`, inferring (and caching) only if it's a CSV
-    /// file within the size bound and not already cached at its current
+    /// Column names for `path`, inferring (and caching) only if it's a CSV,
+    /// JSON or JSONC file within the size bound and not already cached at its current
     /// `(mtime, len)`. Any I/O or inference failure yields `None` rather
     /// than surfacing an error on the completion hot path.
     pub fn columns_for(&mut self, path: &Path) -> Option<Vec<String>> {
-        if path
+        let ext = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-            != Some("csv")
-        {
+            .map(str::to_ascii_lowercase)?;
+        if !matches!(ext.as_str(), "csv" | "json" | "jsonc") {
             return None;
         }
         let meta = fs::metadata(path).ok()?;
@@ -58,13 +57,12 @@ impl SchemaCache {
             }
         }
 
-        let provider = CsvTableProvider::open(path).ok()?;
-        let columns: Vec<String> = provider
-            .schema()
-            .fields
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
+        let schema = if ext == "csv" {
+            CsvTableProvider::open(path).ok()?.schema()
+        } else {
+            JsonTableProvider::open(path).ok()?.schema()
+        };
+        let columns: Vec<String> = schema.fields.iter().map(|f| f.name.clone()).collect();
         self.entries.insert(
             path.to_path_buf(),
             Cached {

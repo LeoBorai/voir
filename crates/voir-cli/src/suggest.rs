@@ -639,10 +639,10 @@ mod tests {
     #[test]
     fn path_literal_and_meta_arg_path_produce_no_identifier_candidates() {
         let (line, pos) = at("SELECT * FROM 'testdata/earthq|");
-        assert!(candidates(&line, pos, &schema()).is_empty());
+        assert_eq!(candidates(&line, pos, &schema()).len(), 0);
 
         let (line, pos) = at("\\open ./testdata/sal|");
-        assert!(candidates(&line, pos, &schema()).is_empty());
+        assert_eq!(candidates(&line, pos, &schema()).len(), 0);
     }
 
     #[test]

@@ -17,6 +17,7 @@ voir-catalog     = { path = "crates/voir-catalog", version = "0.1.0" }
 voir-plan        = { path = "crates/voir-plan", version = "0.1.0" }
 voir-exec        = { path = "crates/voir-exec", version = "0.1.0" }
 voir-source-csv  = { path = "crates/voir-source-csv", version = "0.1.0" }
+voir-source-json = { path = "crates/voir-source-json", version = "0.1.0" }
 
 thiserror   = "2.0.19"
 nom         = "8"
@@ -25,7 +26,7 @@ clap        = { version = "4.6.5", features = ["derive"] }
 comfy-table = "7.2.2"
 reedline    = "0.49"
 miette      = { version = "7", features = ["fancy"] }
-serde_json  = "1"
+serde_json  = { version = "1", features = ["preserve_order"] }
 nu-ansi-term = "0.50"
 
 [workspace.lints.rust]
