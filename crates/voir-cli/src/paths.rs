@@ -11,7 +11,7 @@ use crate::suggest::Kind;
 
 /// Extensions a `voir` `\open`/`FROM` can actually load — ranked above other
 /// files so the list leads with what will work.
-const PREFERRED_EXTENSIONS: &[&str] = &["csv"];
+const PREFERRED_EXTENSIONS: &[&str] = &["csv", "json", "jsonc"];
 
 /// Lists `prefix`'s parent directory, filtered to entries whose name starts
 /// with the fragment after the last `/`. `pos` is the cursor's absolute byte

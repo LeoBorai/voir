@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/LeoBorai/voir/actions/workflows/ci.yml/badge.svg)](https://github.com/LeoBorai/voir/actions/workflows/ci.yml)
 
-`voir` runs SQL queries against files, starting with CSV. No schema
+`voir` runs SQL queries against files, starting with CSV, JSON and JSONC. No schema
 declaration, no import step, no server.
 
 ![demo](assets/demo.gif)
@@ -63,7 +63,7 @@ Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
 
 ### SQL support
 
-`SELECT [DISTINCT] <cols|*> FROM '<file.csv>' [WHERE <predicate>]
+`SELECT [DISTINCT] <cols|*> FROM '<file.csv|json|jsonc>' [WHERE <predicate>]
 [GROUP BY <exprs>] [HAVING <predicate>] [ORDER BY <exprs> [ASC|DESC]]
 [LIMIT n] [OFFSET n]`
 

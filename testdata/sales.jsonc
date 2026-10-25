@@ -1,0 +1,5 @@
+// sales
+[
+ {"region":"EU","amount":10, "tags":["a"]},
+ {"region":"US","amount":5.5,},
+]
