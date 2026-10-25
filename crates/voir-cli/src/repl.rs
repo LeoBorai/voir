@@ -32,8 +32,8 @@ pub fn run(session: &mut Session) -> Result<(), Box<dyn std::error::Error>> {
         .with_validator(Box::new(VoirValidator))
         .with_edit_mode(edit_mode)
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(completion::menu())))
-        .with_quick_completions(true)
-        .with_partial_completions(true);
+        .with_quick_completions(false)
+        .with_partial_completions(false);
 
     println!("voir {} — type \\? for help", env!("CARGO_PKG_VERSION"));
 
