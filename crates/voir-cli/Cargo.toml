@@ -21,6 +21,7 @@ voir-plan.workspace = true
 voir-exec.workspace = true
 voir-source-csv.workspace = true
 voir-source-json.workspace = true
+voir-source-bson.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 csv.workspace = true

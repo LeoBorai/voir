@@ -7,6 +7,7 @@ use std::time::Instant;
 use comfy_table::Table;
 use voir_catalog::{Catalog, SourceRegistry, TableProvider};
 use voir_plan::{Binder, optimize};
+use voir_source_bson::BsonTableProvider;
 use voir_source_csv::CsvTableProvider;
 use voir_source_json::JsonTableProvider;
 use voir_types::VoirError;
@@ -37,6 +38,9 @@ impl Session {
                 Ok(Arc::new(JsonTableProvider::open(path)?) as Arc<dyn TableProvider>)
             });
         }
+        registry.register("bson", |path| {
+            Ok(Arc::new(BsonTableProvider::open(path)?) as Arc<dyn TableProvider>)
+        });
         Self {
             catalog: Catalog::new(registry),
             format: default_format(),
