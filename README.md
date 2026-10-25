@@ -14,8 +14,20 @@ declaration, no import step, no server.
 
 ## Install
 
-Grab a binary from the [releases page](https://github.com/LeoBorai/voir/releases),
-or build from source:
+Linux and macOS, one line:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/LeoBorai/voir/main/install.sh | sh
+```
+
+The script picks the build for your OS/CPU, verifies its SHA-256 and installs `voir`
+to `~/.local/bin`. Options (environment variables):
+
+- `VOIR_VERSION`: release tag to install, e.g. `v0.1.0` (default: latest).
+- `VOIR_INSTALL_DIR`: install directory (default: `$HOME/.local/bin`).
+
+Linux builds need glibc (no musl/Alpine). On Windows, download the `.zip` from the
+[releases page](https://github.com/LeoBorai/voir/releases). Or build from source:
 
 ```bash
 cargo install --path crates/voir-cli

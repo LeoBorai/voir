@@ -1,11 +1,12 @@
 [package]
-name         = "voir-catalog"
-version.workspace      = true
-edition.workspace      = true
-license.workspace      = true
+name = "voir-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
-authors.workspace      = true
-repository.workspace   = true
+publish.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 voir-types.workspace = true

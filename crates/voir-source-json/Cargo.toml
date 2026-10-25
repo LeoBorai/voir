@@ -1,16 +1,17 @@
 [package]
-name         = "voir-source-json"
-version.workspace      = true
-edition.workspace      = true
-license.workspace      = true
+name = "voir-source-json"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 rust-version.workspace = true
-authors.workspace      = true
-repository.workspace   = true
+publish.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
-voir-types.workspace   = true
+voir-types.workspace = true
 voir-catalog.workspace = true
-serde_json.workspace   = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
