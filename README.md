@@ -45,6 +45,8 @@ voir --format json "SELECT region, SUM(amount) AS total FROM 'testdata/sales.csv
 
 Flags: `--explain` (print the logical plan), `--format table|csv|tsv|json|ndjson`
 (defaults to `table` on a TTY, `csv` when piped), `--timing` (print execution time).
+On a TTY every format is colored and `json` is pretty-printed; piped or `\o` output
+stays plain. Set `NO_COLOR` to disable colors.
 Exit codes: `0` success, `1` query error.
 
 ### REPL

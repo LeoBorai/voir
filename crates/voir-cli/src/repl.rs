@@ -1,4 +1,3 @@
-use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +12,7 @@ use crate::statement;
 use crate::validator::VoirValidator;
 
 pub fn run(session: &mut Session) -> Result<(), Box<dyn std::error::Error>> {
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let color = crate::format::color_enabled();
 
     let history_path = history_path();
     let history: Box<dyn History> = match &history_path {
