@@ -355,13 +355,12 @@ fn parse_select_item(input: Input<'_>) -> Result<(Input<'_>, SelectItem), VoirEr
     if is_wildcard {
         return Ok((input, SelectItem::Wildcard));
     }
-    if let Some(TokenKind::Ident(name) | TokenKind::QuotedIdent(name)) = peek_kind(input, 0) {
-        if matches!(peek_kind(input, 1), Some(TokenKind::Dot))
-            && matches!(peek_kind(input, 2), Some(TokenKind::Star))
-        {
-            let name = name.clone();
-            return Ok((&input[3..], SelectItem::QualifiedWildcard(name)));
-        }
+    if let Some(TokenKind::Ident(name) | TokenKind::QuotedIdent(name)) = peek_kind(input, 0)
+        && matches!(peek_kind(input, 1), Some(TokenKind::Dot))
+        && matches!(peek_kind(input, 2), Some(TokenKind::Star))
+    {
+        let name = name.clone();
+        return Ok((&input[3..], SelectItem::QualifiedWildcard(name)));
     }
     let (input, expr) = parse_expr(input)?;
     let (input, has_as) = opt_token(input, TokenKind::As);

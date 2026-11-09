@@ -256,12 +256,12 @@ impl Scope {
                 .map(|e| (e.expr(), e.name.clone()))
                 .collect(),
         };
-        if items.is_empty() {
-            if let Some(table) = table {
-                return Err(VoirError::Plan(format!(
-                    "no table or alias named \"{table}\" in FROM clause"
-                )));
-            }
+        if items.is_empty()
+            && let Some(table) = table
+        {
+            return Err(VoirError::Plan(format!(
+                "no table or alias named \"{table}\" in FROM clause"
+            )));
         }
         Ok(items)
     }

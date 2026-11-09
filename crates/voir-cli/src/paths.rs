@@ -77,12 +77,11 @@ pub fn complete(prefix: &str, pos: usize) -> Vec<Suggestion> {
 }
 
 fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix('~') {
-        if rest.is_empty() || rest.starts_with('/') {
-            if let Some(home) = std::env::var_os("HOME") {
-                return format!("{}{rest}", home.to_string_lossy());
-            }
-        }
+    if let Some(rest) = path.strip_prefix('~')
+        && (rest.is_empty() || rest.starts_with('/'))
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return format!("{}{rest}", home.to_string_lossy());
     }
     path.to_string()
 }

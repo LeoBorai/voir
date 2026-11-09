@@ -83,16 +83,15 @@ fn extract_equi_keys(
             op: BinaryOperator::Eq,
             right,
         } = &conjunct
+            && let (Some(li), Some(ri)) = (column_index(left), column_index(right))
         {
-            if let (Some(li), Some(ri)) = (column_index(left), column_index(right)) {
-                if li < left_width && ri >= left_width {
-                    keys.push((local(li), local(ri - left_width)));
-                    continue;
-                }
-                if ri < left_width && li >= left_width {
-                    keys.push((local(ri), local(li - left_width)));
-                    continue;
-                }
+            if li < left_width && ri >= left_width {
+                keys.push((local(li), local(ri - left_width)));
+                continue;
+            }
+            if ri < left_width && li >= left_width {
+                keys.push((local(ri), local(li - left_width)));
+                continue;
             }
         }
         residual = Some(match residual {
@@ -204,19 +203,19 @@ impl HashJoinOperator {
         while let Some(batch) = self.left.next_batch()? {
             for left_row in batch.rows {
                 let mut any_match = false;
-                if let Some(key) = keyed(&self.left_keys, &left_row)? {
-                    if let Some(indices) = build_index.get(&key) {
-                        for &index in indices {
-                            let combined = concat_row(&left_row, &right_rows[index]);
-                            let keep = match &self.residual {
-                                Some(f) => matches!(f(&combined)?, Value::Boolean(true)),
-                                None => true,
-                            };
-                            if keep {
-                                any_match = true;
-                                right_matched[index] = true;
-                                out.push(combined);
-                            }
+                if let Some(key) = keyed(&self.left_keys, &left_row)?
+                    && let Some(indices) = build_index.get(&key)
+                {
+                    for &index in indices {
+                        let combined = concat_row(&left_row, &right_rows[index]);
+                        let keep = match &self.residual {
+                            Some(f) => matches!(f(&combined)?, Value::Boolean(true)),
+                            None => true,
+                        };
+                        if keep {
+                            any_match = true;
+                            right_matched[index] = true;
+                            out.push(combined);
                         }
                     }
                 }

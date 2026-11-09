@@ -114,10 +114,10 @@ impl Session {
             return;
         };
         let mut name = None;
-        if let Some(kw) = parts.next() {
-            if kw.eq_ignore_ascii_case("as") {
-                name = parts.next().map(str::to_string);
-            }
+        if let Some(kw) = parts.next()
+            && kw.eq_ignore_ascii_case("as")
+        {
+            name = parts.next().map(str::to_string);
         }
         let path = PathBuf::from(path_str);
         let name = name.unwrap_or_else(|| stem_name(&path));
