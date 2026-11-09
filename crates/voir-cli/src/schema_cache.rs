@@ -51,10 +51,11 @@ impl SchemaCache {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_secs());
 
-        if let Some(cached) = self.entries.get(path) {
-            if cached.mtime_secs == mtime_secs && cached.len == meta.len() {
-                return Some(cached.columns.clone());
-            }
+        if let Some(cached) = self.entries.get(path)
+            && cached.mtime_secs == mtime_secs
+            && cached.len == meta.len()
+        {
+            return Some(cached.columns.clone());
         }
 
         let schema = if ext == "csv" {
