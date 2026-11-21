@@ -25,6 +25,8 @@ pub struct Session {
     /// (`\autocomplete on|off`). Shared with the editor's `AutoMenu` so the
     /// toggle takes effect on the very next keypress.
     pub autocomplete: Arc<AtomicBool>,
+    /// Set by the `exit` command: every statement loop stops and the process quits.
+    pub quit: bool,
 }
 
 impl Session {
@@ -48,6 +50,7 @@ impl Session {
             explain: false,
             output: None,
             autocomplete: Arc::new(AtomicBool::new(true)),
+            quit: false,
         }
     }
 
@@ -72,6 +75,10 @@ impl Session {
     /// Runs `sql`, printing results (or an error) and returning whether it
     /// succeeded — the exit-code signal for non-interactive mode.
     pub fn execute(&mut self, sql: &str) -> bool {
+        if crate::statement::is_exit(sql) {
+            self.quit = true;
+            return true;
+        }
         let start = Instant::now();
         let ok = match self.run_query(sql) {
             Ok(()) => true,
@@ -320,7 +327,7 @@ impl Session {
         match crate::statement::split(&content) {
             Ok(statements) => {
                 for stmt in statements {
-                    if !self.execute(&stmt) {
+                    if !self.execute(&stmt) || self.quit {
                         break;
                     }
                 }

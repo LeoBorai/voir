@@ -436,3 +436,36 @@ fn scalar_functions() {
     assert!(stdout.contains("EU,120.5"));
     assert!(!stdout.contains("eu"));
 }
+
+#[test]
+fn exit_stops_a_script() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = voir()
+        .args(["--format", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            format!(
+                "SELECT region FROM '{0}' LIMIT 1; exit; SELECT amount FROM '{0}' LIMIT 1;",
+                testdata("sales.csv")
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("region") && !stdout.contains("amount"),
+        "{stdout}"
+    );
+}

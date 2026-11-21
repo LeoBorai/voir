@@ -6,7 +6,7 @@ pub fn dispatch(cmd: &str, session: &mut Session) -> bool {
     let cmd = cmd.trim();
     let (name, rest) = cmd.split_once(char::is_whitespace).unwrap_or((cmd, ""));
     match name {
-        "q" => return false,
+        "q" | "exit" => return false,
         "?" => print_help(),
         "open" => session.cmd_open(rest.trim()),
         "dt" => session.cmd_list_tables(),
@@ -39,6 +39,6 @@ fn print_help() {
          \\load <file>              Restore tables and settings from a \\save file\n\
          \\autocomplete on|off      Toggle the completion dropdown (default: on)\n\
          \\?                        Show this help\n\
-         \\q                        Quit"
+         \\q                        Quit (also: exit)"
     );
 }
