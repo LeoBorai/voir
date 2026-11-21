@@ -1,5 +1,5 @@
 use voir_plan::ScalarFunc;
-use voir_types::{Value, VoirError};
+use voir_types::{DataType, Value, VoirError};
 
 /// Evaluates a scalar function against already-evaluated argument values.
 /// Arity was checked at bind time, so `args` is trusted to match `func`.
@@ -35,6 +35,7 @@ pub fn eval_scalar(func: ScalarFunc, args: &[Value]) -> Result<Value, VoirError>
             .find(|v| !v.is_null())
             .cloned()
             .unwrap_or(Value::Null)),
+        ScalarFunc::JsonExtract => Ok(json_extract(args)),
         ScalarFunc::NullIf => {
             if args[0] == args[1] {
                 Ok(Value::Null)
@@ -105,4 +106,35 @@ fn type_err(op: &str, v: &Value) -> VoirError {
         "{op}: unexpected argument type {:?}",
         v.data_type()
     ))
+}
+
+/// `json_extract(text, key, type)`: `NULL` for non-objects, missing keys and
+/// JSON `null`; nested objects/arrays come back as their JSON text.
+fn json_extract(args: &[Value]) -> Value {
+    let (Value::Utf8(text), Value::Utf8(key)) = (&args[0], &args[1]) else {
+        return Value::Null;
+    };
+    let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Value::Null;
+    };
+    let target = match &args[2] {
+        Value::Utf8(t) => match &**t {
+            "Int64" => DataType::Int64,
+            "Float64" => DataType::Float64,
+            "Boolean" => DataType::Boolean,
+            _ => DataType::Utf8,
+        },
+        _ => DataType::Utf8,
+    };
+    match obj.get(&**key) {
+        None | Some(serde_json::Value::Null) => Value::Null,
+        Some(serde_json::Value::String(s)) => Value::utf8(s.as_str()),
+        Some(serde_json::Value::Bool(b)) if target == DataType::Boolean => Value::Boolean(*b),
+        Some(serde_json::Value::Number(n)) => match target {
+            DataType::Int64 => n.as_i64().map_or(Value::Null, Value::Int64),
+            DataType::Float64 => n.as_f64().map_or(Value::Null, Value::Float64),
+            _ => Value::utf8(n.to_string()),
+        },
+        Some(other) => Value::utf8(other.to_string()),
+    }
 }

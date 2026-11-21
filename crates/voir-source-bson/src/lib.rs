@@ -106,6 +106,18 @@ impl TableProvider for BsonTableProvider {
         self.schema.clone()
     }
 
+    fn nested_fields(&self, column: usize) -> Option<Vec<Field>> {
+        let docs: Vec<serde_json::Value> = self
+            .rows
+            .iter()
+            .filter_map(|row| match row.get(column) {
+                Some(doc @ Bson::Document(_)) => Some(doc.clone().into_relaxed_extjson()),
+                _ => None,
+            })
+            .collect();
+        voir_catalog::infer_object_fields(docs.iter().filter_map(serde_json::Value::as_object))
+    }
+
     // No index to consult: filters are returned unapplied for the engine's
     // Filter operator.
     fn scan(
