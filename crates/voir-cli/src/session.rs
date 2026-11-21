@@ -145,6 +145,7 @@ impl Session {
         }
         rows.sort_by(|a, b| a.0.cmp(b.0));
         let mut table = Table::new();
+        format::boxed(&mut table);
         table.set_header(vec!["Name", "Path"]);
         for (name, reg) in rows {
             table.add_row(vec![name.to_string(), reg.path.display().to_string()]);
@@ -164,6 +165,7 @@ impl Session {
         };
         let schema = reg.provider.schema();
         let mut table = Table::new();
+        format::boxed(&mut table);
         table.set_header(vec!["Column", "Type", "Nullable"]);
         for field in &schema.fields {
             table.add_row(vec![

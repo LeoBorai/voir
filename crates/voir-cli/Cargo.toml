@@ -24,12 +24,14 @@ voir-source-json.workspace = true
 voir-source-bson.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
+crossterm.workspace = true
 csv.workspace = true
 reedline.workspace = true
 miette.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 nu-ansi-term.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true
