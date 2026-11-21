@@ -2,10 +2,10 @@ use std::fs::File;
 use std::io::{self, BufWriter, IsTerminal, Write};
 use std::path::Path;
 
-use comfy_table::presets::ASCII_MARKDOWN;
-use comfy_table::{Attribute, Cell, CellAlignment, Color, Table};
+use comfy_table::presets::{ASCII_MARKDOWN, UTF8_FULL};
+use comfy_table::{Attribute, Cell, CellAlignment, Color, Table, TableComponent};
 use nu_ansi_term::Style;
-use voir_types::{Batch, SchemaRef, Value, VoirError};
+use voir_types::{Batch, DataType, SchemaRef, Value, VoirError};
 
 /// Cells beyond this width are truncated with an ellipsis so one wide column
 /// doesn't blow out the whole table.
@@ -51,10 +51,13 @@ pub trait ResultWriter {
     fn finish(&mut self) -> Result<(), VoirError>;
 }
 
-/// Whether stdout should carry ANSI colors: a terminal, and the user hasn't
-/// opted out through `NO_COLOR` (<https://no-color.org>).
+/// Whether stdout should carry ANSI colors: a terminal, the `colors` setting
+/// is on, and the user hasn't opted out through `NO_COLOR`
+/// (<https://no-color.org>).
 pub fn color_enabled() -> bool {
-    io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+    io::stdout().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none()
+        && crate::settings::get().colors
 }
 
 /// How a writer decorates its output. Both flags are off whenever results go
@@ -141,10 +144,48 @@ fn value_style(value: &Value) -> Style {
     }
 }
 
+/// Box-drawing style with solid inner lines (the stock `UTF8_FULL` preset
+/// draws them dashed).
+pub fn boxed(table: &mut Table) {
+    table.load_preset(UTF8_FULL);
+    table.set_style(TableComponent::VerticalLines, '│');
+    table.set_style(TableComponent::HorizontalLines, '─');
+}
+
 struct TableWriter {
     table: Table,
     sink: Box<dyn Write>,
     color: bool,
+    /// Per column: looks like a primary key (see `primary_key_columns`).
+    primary_keys: Vec<bool>,
+    /// Results may open in the scrolling viewer (terminal output only).
+    pageable: bool,
+}
+
+fn type_label(data_type: DataType) -> &'static str {
+    match data_type {
+        DataType::Null => "null",
+        DataType::Boolean => "bool",
+        DataType::Int64 => "int",
+        DataType::Float64 => "float",
+        DataType::Utf8 => "text",
+        DataType::Date => "date",
+        DataType::Timestamp => "timestamp",
+    }
+}
+
+/// Sources carry no key metadata, so a primary key is guessed from naming:
+/// a column called `id`, or the first column when it ends in `_id`.
+fn primary_key_columns(schema: &SchemaRef) -> Vec<bool> {
+    schema
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let name = f.name.to_ascii_lowercase();
+            name == "id" || (i == 0 && name.ends_with("_id"))
+        })
+        .collect()
 }
 
 impl TableWriter {
@@ -158,6 +199,8 @@ impl TableWriter {
         let mut table = Table::new();
         if markdown {
             table.load_preset(ASCII_MARKDOWN);
+        } else {
+            boxed(&mut table);
         }
         // comfy-table sniffs stdout on its own; when writing to a file that
         // would leak escape codes (and terminal-width wrapping) into it.
@@ -165,17 +208,26 @@ impl TableWriter {
             table.force_no_tty();
         }
         table.set_header(schema.fields.iter().map(|f| {
-            let cell = Cell::new(&f.name);
+            if markdown {
+                return Cell::new(&f.name);
+            }
+            // Bold, colored name followed by a plain `(type)`.
+            let ty = format!("({})", type_label(f.data_type));
             if decor.color {
-                cell.fg(Color::Blue).add_attribute(Attribute::Bold)
+                Cell::new(format!("{} {ty}", palette::header().paint(&f.name)))
             } else {
-                cell
+                Cell::new(format!("{} {ty}", f.name))
             }
         }));
         Self {
             table,
             sink,
             color: decor.color,
+            primary_keys: primary_key_columns(schema),
+            pageable: !markdown
+                && output.is_none()
+                && io::stdout().is_terminal()
+                && io::stdin().is_terminal(),
         }
     }
 }
@@ -183,19 +235,27 @@ impl TableWriter {
 impl ResultWriter for TableWriter {
     fn write_batch(&mut self, batch: &Batch) -> Result<(), VoirError> {
         for row in &batch.rows {
-            self.table
-                .add_row(row.0.iter().map(|v| render_cell(v, self.color)));
+            self.table.add_row(
+                row.0
+                    .iter()
+                    .zip(&self.primary_keys)
+                    .map(|(v, &pk)| render_cell(v, self.color, pk)),
+            );
         }
         Ok(())
     }
 
     fn finish(&mut self) -> Result<(), VoirError> {
-        writeln!(self.sink, "{}", self.table)?;
+        let rendered = self.table.to_string();
+        if self.pageable && crate::pager::show_if_needed(&rendered)? {
+            return Ok(());
+        }
+        writeln!(self.sink, "{rendered}")?;
         Ok(())
     }
 }
 
-fn render_cell(value: &Value, color: bool) -> Cell {
+fn render_cell(value: &Value, color: bool, primary_key: bool) -> Cell {
     let (cell, fg) = match value {
         Value::Null => (
             Cell::new("NULL").add_attribute(Attribute::Italic),
@@ -213,6 +273,12 @@ fn render_cell(value: &Value, color: bool) -> Cell {
         Value::Utf8(s) => (Cell::new(truncate(s)), None),
         Value::Date(d) => (Cell::new(d.to_string()), Some(Color::Cyan)),
         Value::Timestamp(t) => (Cell::new(t.to_string()), Some(Color::Cyan)),
+    };
+    // Keys get their own color; NULL keeps its dim italic look.
+    let fg = if primary_key && !value.is_null() {
+        Some(Color::AnsiValue(214))
+    } else {
+        fg
     };
     match fg {
         Some(fg) if color => cell.fg(fg),

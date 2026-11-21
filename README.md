@@ -88,6 +88,13 @@ Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
 - Scalar functions: `UPPER`, `LOWER`, `TRIM`, `LENGTH`, `CONCAT`, `ABS`,
   `ROUND`, `CEIL`, `FLOOR`, `POWER`, `SQRT`, `MOD`, `COALESCE`, `NULLIF`.
 - `EXPLAIN <query>` prints the logical plan instead of running it.
+- `CREATE TABLE <name> AS <query>` materializes a query result as an in-memory
+  table for the rest of the session (not kept by `\save`). Tables, files and
+  table functions like `read_json('file.json')` all work in `FROM`; the
+  function name is ignored and the file extension picks the reader.
+- `row_number() OVER ([PARTITION BY ...] [ORDER BY ...])` as a `SELECT` item.
+- `parse_json(<column>)` (or `<column>.*`) as a `SELECT` item expands the keys of a
+  JSON object column into one column each.
 
 See `plan.md` for the full roadmap (joins, subqueries, additional formats).
 

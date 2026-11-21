@@ -10,7 +10,7 @@ use voir_types::{DataType, SchemaRef, Value, VoirError};
 
 use crate::agg::{AggExpr, AggFunc, agg_func_from_name};
 use crate::expr::{PlanExpr, ScalarFunc};
-use crate::logical::{LogicalPlan, SortKey};
+use crate::logical::{LogicalPlan, SortKey, WindowExpr};
 use crate::scope::Scope;
 
 /// Case-insensitive CTE name -> its (still-unbound) query. Queries are
@@ -40,7 +40,7 @@ impl<'a> Binder<'a> {
         let ctes = CteEnv::new();
         let mut resolving = Vec::new();
         match statement {
-            Statement::Query(query) => {
+            Statement::Query(query) | Statement::CreateTableAs { query, .. } => {
                 Ok((self.bind_query(query, &ctes, &mut resolving)?.0, false))
             }
             Statement::Explain(query) => {
@@ -165,8 +165,21 @@ impl<'a> Binder<'a> {
             plan = binding.plan;
             (binding.select_exprs, binding.having, binding.order_keys)
         } else {
-            let select_exprs =
-                self.bind_select_list(&select.projection, &scope, ctes, resolving)?;
+            let mut windows = Vec::new();
+            let select_exprs = self.bind_select_list(
+                &select.projection,
+                &scope,
+                &plan,
+                &mut windows,
+                ctes,
+                resolving,
+            )?;
+            if !windows.is_empty() {
+                plan = LogicalPlan::Window {
+                    input: Box::new(plan),
+                    windows,
+                };
+            }
             let order_keys =
                 self.bind_order_by_plain(order_by, &select_exprs, &scope, ctes, resolving)?;
             (select_exprs, None, order_keys)
@@ -313,19 +326,101 @@ impl<'a> Binder<'a> {
         })
     }
 
+    /// Window functions are only accepted as a whole select item; each one
+    /// is appended to `windows` and referenced by the column `Window` will
+    /// add after `input`'s own columns.
+    #[allow(clippy::too_many_arguments)]
     fn bind_select_list(
         &self,
         items: &[SelectItem],
         scope: &Scope,
+        input: &LogicalPlan,
+        windows: &mut Vec<WindowExpr>,
         ctes: &CteEnv,
         resolving: &mut Vec<String>,
     ) -> Result<Vec<(PlanExpr, String)>, VoirError> {
+        let input_width = input.schema().fields.len();
         let mut exprs = Vec::new();
         for item in items {
             match item {
                 SelectItem::Wildcard => exprs.extend(scope.wildcard(None)?),
-                SelectItem::QualifiedWildcard(table) => {
-                    exprs.extend(scope.wildcard(Some(table))?);
+                SelectItem::QualifiedWildcard(table) => match scope.wildcard(Some(table)) {
+                    Ok(items) => exprs.extend(items),
+                    Err(err) => match expand_nested_wildcard(table, scope, input) {
+                        Some(items) => exprs.extend(items),
+                        None => return Err(err),
+                    },
+                },
+                SelectItem::Expr {
+                    expr:
+                        Expr::Window {
+                            name: func,
+                            args,
+                            partition_by,
+                            order_by,
+                        },
+                    alias,
+                } => {
+                    if !func.eq_ignore_ascii_case("row_number") {
+                        return Err(VoirError::Plan(format!(
+                            "unsupported window function \"{func}\" (only row_number is available)"
+                        )));
+                    }
+                    if !args.is_empty() {
+                        return Err(VoirError::Plan("row_number() takes no arguments".into()));
+                    }
+                    let name = alias.clone().unwrap_or_else(|| "row_number".to_string());
+                    let partition_by = partition_by
+                        .iter()
+                        .map(|e| self.bind_expr(e, scope, ctes, resolving))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let order_by = order_by
+                        .iter()
+                        .map(|o| {
+                            Ok(SortKey {
+                                expr: self.bind_expr(&o.expr, scope, ctes, resolving)?,
+                                desc: o.desc,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, VoirError>>()?;
+                    exprs.push((
+                        PlanExpr::Column {
+                            index: input_width + windows.len(),
+                            name: name.clone(),
+                        },
+                        name.clone(),
+                    ));
+                    windows.push(WindowExpr {
+                        name,
+                        partition_by,
+                        order_by,
+                    });
+                }
+                SelectItem::Expr {
+                    expr: Expr::Function { name, args, .. },
+                    alias,
+                } if name.eq_ignore_ascii_case("parse_json") => {
+                    if alias.is_some() {
+                        return Err(VoirError::Plan(
+                            "parse_json() expands to one column per field and cannot take an alias"
+                                .into(),
+                        ));
+                    }
+                    let [arg @ (Expr::Ident(_) | Expr::CompoundIdent(..))] = args.as_slice() else {
+                        return Err(VoirError::Plan(
+                            "parse_json() takes exactly one column reference".into(),
+                        ));
+                    };
+                    let col = self.bind_expr(arg, scope, ctes, resolving)?;
+                    let display = display_expr_name(arg);
+                    match expand_nested_column(&col, input) {
+                        Some(items) => exprs.extend(items),
+                        None => {
+                            return Err(VoirError::Plan(format!(
+                                "parse_json({display}): column holds no JSON objects"
+                            )));
+                        }
+                    }
                 }
                 SelectItem::Expr { expr, alias } => {
                     let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
@@ -523,6 +618,7 @@ impl<'a> Binder<'a> {
             });
         }
         match expr {
+            Expr::Window { .. } => Err(window_position_error()),
             Expr::Function {
                 name,
                 args,
@@ -827,6 +923,7 @@ impl<'a> Binder<'a> {
             Expr::Wildcard => Err(VoirError::Plan(
                 "'*' is only valid inside COUNT(...)".into(),
             )),
+            Expr::Window { .. } => Err(window_position_error()),
             Expr::UnaryOp { op, expr } => Ok(PlanExpr::UnaryOp {
                 op: *op,
                 expr: Box::new(self.bind_expr(expr, scope, ctes, resolving)?),
@@ -871,6 +968,11 @@ impl<'a> Binder<'a> {
                     return Err(VoirError::Plan(format!(
                         "aggregate function \"{name}\" requires GROUP BY (or must be used in HAVING)"
                     )));
+                }
+                if lower == "parse_json" {
+                    return Err(VoirError::Plan(
+                        "parse_json() is only allowed as a SELECT item".into(),
+                    ));
                 }
                 let func = ScalarFunc::from_name(&lower)
                     .ok_or_else(|| VoirError::Plan(format!("unknown function \"{name}\"")))?;
@@ -997,6 +1099,7 @@ fn contains_aggregate(expr: &Expr) -> bool {
         | Expr::CompoundIdent(_, _)
         | Expr::Literal(_)
         | Expr::Wildcard
+        | Expr::Window { .. }
         | Expr::Exists { .. }
         | Expr::ScalarSubquery(_) => false,
     }
@@ -1079,6 +1182,86 @@ fn table_name_from_path(path: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or(path)
         .to_string()
+}
+
+fn window_position_error() -> VoirError {
+    VoirError::Plan(
+        "window functions are only allowed as a whole item of the SELECT list \
+         of a query without GROUP BY or aggregates"
+            .into(),
+    )
+}
+
+/// Expands `<column>.*` when `<column>` is not a table alias but a column
+/// holding nested objects the source knows the shape of: one `json_extract`
+/// per key. Looks through plan nodes that keep the input's column layout.
+fn expand_nested_wildcard(
+    column: &str,
+    scope: &Scope,
+    input: &LogicalPlan,
+) -> Option<Vec<(PlanExpr, String)>> {
+    let col_expr = scope.resolve(None, column).ok()?;
+    expand_nested_column(&col_expr, input)
+}
+
+fn expand_nested_column(
+    col_expr: &PlanExpr,
+    input: &LogicalPlan,
+) -> Option<Vec<(PlanExpr, String)>> {
+    let PlanExpr::Column { index, .. } = col_expr else {
+        return None;
+    };
+    let fields = nested_fields_of(input, *index)?;
+    Some(
+        fields
+            .into_iter()
+            .map(|f| {
+                let expr = PlanExpr::Function {
+                    func: ScalarFunc::JsonExtract,
+                    args: vec![
+                        col_expr.clone(),
+                        PlanExpr::Literal(Value::utf8(f.name.as_str())),
+                        PlanExpr::Literal(Value::utf8(format!("{:?}", f.data_type))),
+                    ],
+                };
+                (expr, f.name)
+            })
+            .collect(),
+    )
+}
+
+fn nested_fields_of(plan: &LogicalPlan, index: usize) -> Option<Vec<voir_types::Field>> {
+    match plan {
+        LogicalPlan::Scan {
+            source, projection, ..
+        } => {
+            let source_index = match projection {
+                None => index,
+                Some(indices) => *indices.get(index)?,
+            };
+            source.nested_fields(source_index)
+        }
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Window { input, .. } => nested_fields_of(input, index),
+        // Only a plain column pass-through keeps the nested structure.
+        LogicalPlan::Projection { input, exprs } => match &exprs.get(index)?.0 {
+            PlanExpr::Column { index: inner, .. } => nested_fields_of(input, *inner),
+            _ => None,
+        },
+        LogicalPlan::Join { left, right, .. } => {
+            let left_width = left.schema().fields.len();
+            if index < left_width {
+                nested_fields_of(left, index)
+            } else {
+                nested_fields_of(right, index - left_width)
+            }
+        }
+        LogicalPlan::SetOp { left, .. } => nested_fields_of(left, index),
+        LogicalPlan::Aggregate { .. } => None,
+    }
 }
 
 #[cfg(test)]

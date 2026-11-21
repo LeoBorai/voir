@@ -2,6 +2,12 @@
 pub enum Statement {
     Query(Box<Query>),
     Explain(Box<Query>),
+    /// `CREATE TABLE <name> AS <query>`: the result is materialized in memory
+    /// and registered as a named table.
+    CreateTableAs {
+        name: String,
+        query: Box<Query>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,6 +123,13 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
         distinct: bool,
+    },
+    /// `<func>(<args>) OVER ([PARTITION BY ...] [ORDER BY ...])`.
+    Window {
+        name: String,
+        args: Vec<Expr>,
+        partition_by: Vec<Expr>,
+        order_by: Vec<OrderByExpr>,
     },
     Case {
         operand: Option<Box<Expr>>,

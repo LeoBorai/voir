@@ -1,7 +1,10 @@
 use std::process::Command;
 
 fn voir() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_voir"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_voir"));
+    // Keep the settings file out of the real home directory.
+    cmd.env("HOME", env!("CARGO_TARGET_TMPDIR"));
+    cmd
 }
 
 fn testdata(name: &str) -> String {
@@ -435,4 +438,180 @@ fn scalar_functions() {
     assert!(stdout.contains("EU,45"));
     assert!(stdout.contains("EU,120.5"));
     assert!(!stdout.contains("eu"));
+}
+
+#[test]
+fn create_table_as_expands_nested_json_with_row_number() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let path = testdata("parkinglot.jsonc");
+    let script = format!(
+        "CREATE TABLE vehicle AS SELECT row_number() OVER (ORDER BY slot) AS vehicle_id, \
+         vehicle.* FROM read_json('{path}');\n\
+         SELECT vehicle_id, model, make, engine, plate_number FROM vehicle WHERE engine > 5;"
+    );
+    let mut child = voir()
+        .args(["--format", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("vehicle_id,model,make,engine,plate_number"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1,Corolla,Toyota,5.1,123ABC"), "{stdout}");
+}
+
+#[test]
+fn row_number_partitions_and_orders() {
+    let path = testdata("sales.csv");
+    let output = voir()
+        .args(["--format", "csv"])
+        .arg(format!(
+            "SELECT row_number() OVER (PARTITION BY region ORDER BY amount DESC) AS rn, \
+             region, amount FROM '{path}'"
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("rn,region,amount"), "{stdout}");
+    assert!(stdout.contains("1,APAC,102.25"), "{stdout}");
+}
+
+#[test]
+fn nested_json_expands_through_ctas_and_subqueries() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let path = testdata("parkinglot.jsonc");
+    let script = format!(
+        "CREATE TABLE p AS SELECT slot, vehicle FROM '{path}';\n\
+         CREATE TABLE q AS SELECT slot, vehicle.* FROM p;\n\
+         SELECT * FROM q;\n\
+         SELECT * FROM (SELECT vehicle.* FROM '{path}') t;"
+    );
+    let mut child = voir()
+        .args(["--format", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("slot,model,make,engine,plate_number\n1,Corolla,Toyota,5.1,123ABC"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("model,make,engine,plate_number\nCorolla,Toyota,5.1,123ABC"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn parse_json_expands_object_column() {
+    let path = testdata("parkinglot.jsonc");
+    let output = voir()
+        .args(["--format", "csv"])
+        .arg(format!("SELECT slot, parse_json(vehicle) FROM '{path}'"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("slot,model,make,engine,plate_number\n1,Corolla,Toyota,5.1,123ABC"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn exit_stops_a_script() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = voir()
+        .args(["--format", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            format!(
+                "SELECT region FROM '{0}' LIMIT 1; exit; SELECT amount FROM '{0}' LIMIT 1;",
+                testdata("sales.csv")
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("region") && !stdout.contains("amount"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn table_header_shows_types_and_settings_file_is_created() {
+    let output = voir()
+        .args(["--format", "table"])
+        .arg(format!(
+            "SELECT * FROM '{}' LIMIT 1",
+            testdata("customers.csv")
+        ))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("customer_id (int)"), "{stdout}");
+    assert!(stdout.contains("name (text)"), "{stdout}");
+    let settings = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(".dato/settings.toml");
+    assert!(
+        std::fs::read_to_string(settings)
+            .unwrap()
+            .contains("colors = true")
+    );
 }

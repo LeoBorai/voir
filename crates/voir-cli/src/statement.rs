@@ -5,12 +5,23 @@ use voir_types::VoirError;
 /// signal the REPL uses to stop accumulating continuation lines. Reuses the
 /// lexer rather than a separate heuristic so the two never drift apart.
 pub fn is_complete(buffer: &str) -> bool {
+    if is_exit(buffer) {
+        return true;
+    }
     match voir_sql::tokenize(buffer) {
         Ok(tokens) => tokens
             .iter()
             .any(|t| matches!(t.kind, TokenKind::Semicolon)),
         Err(_) => false,
     }
+}
+
+/// Whether `stmt` is the bare `exit` command (optionally followed by `;`).
+pub fn is_exit(stmt: &str) -> bool {
+    stmt.trim()
+        .trim_end_matches(';')
+        .trim()
+        .eq_ignore_ascii_case("exit")
 }
 
 /// Splits `src` into individual statement texts on top-level `;` boundaries,

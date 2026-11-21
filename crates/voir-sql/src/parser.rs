@@ -102,7 +102,32 @@ fn starts_subquery(input: Input<'_>) -> bool {
     )
 }
 
+fn is_word(input: Input<'_>, offset: usize, word: &str) -> bool {
+    matches!(peek_kind(input, offset), Some(TokenKind::Ident(s)) if s.eq_ignore_ascii_case(word))
+}
+
+fn parse_create_table_as(input: Input<'_>) -> Result<(Input<'_>, Statement), VoirError> {
+    let (input, _) = advance(input); // CREATE
+    if !is_word(input, 0, "table") {
+        return Err(err_at(input, "TABLE"));
+    }
+    let (input, _) = advance(input);
+    let (input, name) = parse_ident(input)?;
+    let (input, _) = expect(input, &TokenKind::As, "AS")?;
+    let (input, query) = parse_query(input)?;
+    Ok((
+        input,
+        Statement::CreateTableAs {
+            name,
+            query: Box::new(query),
+        },
+    ))
+}
+
 fn parse_statement(input: Input<'_>) -> Result<(Input<'_>, Statement), VoirError> {
+    if is_word(input, 0, "create") {
+        return parse_create_table_as(input);
+    }
     let (input, is_explain) = opt_token(input, TokenKind::Explain);
     let (input, query) = parse_query(input)?;
     let statement = if is_explain {
@@ -504,6 +529,19 @@ fn parse_table_from(input: Input<'_>) -> Result<(Input<'_>, FromClause), VoirErr
             });
         }
     };
+    // `read_json('file.json')`-style table functions: the function name is
+    // ignored, the file extension picks the adapter.
+    let (input, name) = if matches!(input[0].kind, TokenKind::LParen)
+        && matches!(peek_kind(input, 1), Some(TokenKind::StringLiteral(_)))
+        && matches!(peek_kind(input, 2), Some(TokenKind::RParen))
+    {
+        let Some(TokenKind::StringLiteral(path)) = peek_kind(input, 1) else {
+            unreachable!("matched above")
+        };
+        (&input[3..], path.clone())
+    } else {
+        (input, name)
+    };
     let (input, has_as) = opt_token(input, TokenKind::As);
     let (input, alias) = if has_as || matches!(peek_kind(input, 0), Some(TokenKind::Ident(_))) {
         let (input, name) = parse_ident(input)?;
@@ -843,12 +881,48 @@ fn parse_function_call(input: Input<'_>, name: String) -> Result<(Input<'_>, Exp
     };
 
     let (input, _) = expect(input, &TokenKind::RParen, "')'")?;
+    if is_word(input, 0, "over") {
+        let (input, _) = advance(input);
+        return parse_window_spec(input, name, args);
+    }
     Ok((
         input,
         Expr::Function {
             name,
             args,
             distinct,
+        },
+    ))
+}
+
+fn parse_window_spec(
+    input: Input<'_>,
+    name: String,
+    args: Vec<Expr>,
+) -> Result<(Input<'_>, Expr), VoirError> {
+    let (input, _) = expect(input, &TokenKind::LParen, "'('")?;
+    let (input, partition_by) = if is_word(input, 0, "partition") {
+        let (input, _) = advance(input);
+        let (input, _) = expect(input, &TokenKind::By, "BY")?;
+        parse_expr_list(input)?
+    } else {
+        (input, Vec::new())
+    };
+    let (input, has_order) = opt_token(input, TokenKind::Order);
+    let (input, order_by) = if has_order {
+        let (input, _) = expect(input, &TokenKind::By, "BY")?;
+        parse_order_by_list(input)?
+    } else {
+        (input, Vec::new())
+    };
+    let (input, _) = expect(input, &TokenKind::RParen, "')'")?;
+    Ok((
+        input,
+        Expr::Window {
+            name,
+            args,
+            partition_by,
+            order_by,
         },
     ))
 }
@@ -1506,5 +1580,37 @@ mod tests {
             panic!("expected expr")
         };
         assert!(matches!(expr, Expr::ScalarSubquery(_)));
+    }
+
+    #[test]
+    fn parses_create_table_as_with_window_and_table_function() {
+        let stmt = parse(
+            "CREATE TABLE v AS SELECT row_number() OVER (PARTITION BY a ORDER BY b DESC) AS n, \
+             v.* FROM read_json('x.json')",
+        )
+        .unwrap();
+        let Statement::CreateTableAs { name, query } = stmt else {
+            panic!("expected CREATE TABLE AS")
+        };
+        assert_eq!(name, "v");
+        let SetExpr::Select(select) = &query.body else {
+            panic!("expected select")
+        };
+        assert_eq!(
+            select.from,
+            FromClause::Table {
+                name: "x.json".into(),
+                alias: None
+            }
+        );
+        assert!(matches!(
+            &select.projection[0],
+            SelectItem::Expr { expr: Expr::Window { partition_by, order_by, .. }, .. }
+                if partition_by.len() == 1 && order_by.len() == 1 && order_by[0].desc
+        ));
+        assert_eq!(
+            select.projection[1],
+            SelectItem::QualifiedWildcard("v".into())
+        );
     }
 }

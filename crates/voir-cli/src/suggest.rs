@@ -78,7 +78,7 @@ impl Snapshot {
     }
 }
 
-const STATEMENT_START_KEYWORDS: &[&str] = &["SELECT", "EXPLAIN", "WITH"];
+const STATEMENT_START_KEYWORDS: &[&str] = &["SELECT", "EXPLAIN", "WITH", "CREATE"];
 const SCALAR_FUNCTIONS: &[&str] = &[
     "upper", "lower", "trim", "length", "concat", "abs", "round", "ceil", "floor", "power", "sqrt",
     "mod", "coalesce", "nullif",
@@ -650,7 +650,7 @@ mod tests {
         let (line, pos) = at("|");
         let cands = candidates(&line, pos, &schema());
         for c in &cands {
-            assert!(["SELECT", "EXPLAIN", "WITH"].contains(&c.value.as_str()));
+            assert!(["SELECT", "EXPLAIN", "WITH", "CREATE"].contains(&c.value.as_str()));
         }
     }
 }
