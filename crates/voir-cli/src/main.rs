@@ -112,6 +112,9 @@ fn run_stdin(session: &mut Session) -> bool {
         if !session.execute(stmt) {
             return false;
         }
+        if session.quit {
+            break;
+        }
     }
     true
 }

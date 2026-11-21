@@ -56,6 +56,9 @@ pub fn run(session: &mut Session) -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 run_batch(session, &buffer);
+                if session.quit {
+                    break;
+                }
             }
             Ok(Signal::CtrlC) => {
                 if interrupted_once {
@@ -85,7 +88,7 @@ fn run_batch(session: &mut Session, buffer: &str) {
     match statement::split(buffer) {
         Ok(statements) => {
             for stmt in statements {
-                if !session.execute(&stmt) {
+                if !session.execute(&stmt) || session.quit {
                     break;
                 }
             }
