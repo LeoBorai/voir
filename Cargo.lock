@@ -1345,7 +1345,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voir-catalog"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde_json",
  "voir-types",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "voir-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "clap",
  "comfy-table",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "voir-exec"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde_json",
  "voir-catalog",
@@ -1388,7 +1388,7 @@ dependencies = [
 
 [[package]]
 name = "voir-plan"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "voir-catalog",
  "voir-sql",
@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "voir-source-bson"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "bson",
  "serde_json",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "voir-source-csv"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "csv",
  "tempfile",
@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "voir-source-json"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "voir-sql"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "nom 8.0.0",
  "voir-types",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "voir-types"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "thiserror",
 ]
