@@ -1,7 +1,10 @@
 use std::process::Command;
 
 fn voir() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_voir"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_voir"));
+    // Keep the settings file out of the real home directory.
+    cmd.env("HOME", env!("CARGO_TARGET_TMPDIR"));
+    cmd
 }
 
 fn testdata(name: &str) -> String {
@@ -467,5 +470,27 @@ fn exit_stops_a_script() {
     assert!(
         stdout.contains("region") && !stdout.contains("amount"),
         "{stdout}"
+    );
+}
+
+#[test]
+fn table_header_shows_types_and_settings_file_is_created() {
+    let output = voir()
+        .args(["--format", "table"])
+        .arg(format!(
+            "SELECT * FROM '{}' LIMIT 1",
+            testdata("customers.csv")
+        ))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("customer_id (int)"), "{stdout}");
+    assert!(stdout.contains("name (text)"), "{stdout}");
+    let settings = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(".voir/settings.toml");
+    assert!(
+        std::fs::read_to_string(settings)
+            .unwrap()
+            .contains("colors = true")
     );
 }

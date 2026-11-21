@@ -8,11 +8,13 @@ mod diagnostics;
 mod format;
 mod highlight;
 mod meta;
+mod pager;
 mod paths;
 mod prompt;
 mod repl;
 mod schema_cache;
 mod session;
+mod settings;
 mod statement;
 mod suggest;
 mod validator;
@@ -52,6 +54,7 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    settings::init();
     let mut session = Session::new();
     session.explain = cli.explain;
     session.timing = cli.timing;
