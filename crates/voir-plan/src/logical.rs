@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use voir_catalog::{FilterExpr, TableProvider};
 use voir_sql::{JoinType, SetOperator};
-use voir_types::{Field, Schema, SchemaRef};
+use voir_types::{DataType, Field, Schema, SchemaRef};
 
 use crate::agg::AggExpr;
 use crate::expr::PlanExpr;
@@ -12,6 +12,15 @@ use crate::expr::PlanExpr;
 pub struct SortKey {
     pub expr: PlanExpr,
     pub desc: bool,
+}
+
+/// One window-function column appended by `LogicalPlan::Window`. Only
+/// `row_number()` exists today.
+#[derive(Clone)]
+pub struct WindowExpr {
+    pub name: String,
+    pub partition_by: Vec<PlanExpr>,
+    pub order_by: Vec<SortKey>,
 }
 
 #[derive(Clone)]
@@ -42,6 +51,12 @@ pub enum LogicalPlan {
     },
     Distinct {
         input: Box<LogicalPlan>,
+    },
+    /// Passes every input column through unchanged and appends one `Int64`
+    /// column per window expression, in order.
+    Window {
+        input: Box<LogicalPlan>,
+        windows: Vec<WindowExpr>,
     },
     Limit {
         input: Box<LogicalPlan>,
@@ -134,6 +149,15 @@ impl LogicalPlan {
                 Arc::new(Schema::new(fields))
             }
             LogicalPlan::SetOp { left, .. } => left.schema(),
+            LogicalPlan::Window { input, windows } => {
+                let mut fields = input.schema().fields.clone();
+                fields.extend(
+                    windows
+                        .iter()
+                        .map(|w| Field::new(w.name.clone(), DataType::Int64, false)),
+                );
+                Arc::new(Schema::new(fields))
+            }
         }
     }
 
@@ -191,6 +215,11 @@ impl LogicalPlan {
             }
             LogicalPlan::Distinct { input } => {
                 writeln!(f, "{pad}Distinct")?;
+                input.fmt_indent(f, depth + 1)
+            }
+            LogicalPlan::Window { input, windows } => {
+                let names: Vec<&str> = windows.iter().map(|w| w.name.as_str()).collect();
+                writeln!(f, "{pad}Window: row_number AS [{}]", names.join(", "))?;
                 input.fmt_indent(f, depth + 1)
             }
             LogicalPlan::Limit { input, skip, fetch } => {

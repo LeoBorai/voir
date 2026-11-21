@@ -30,7 +30,9 @@ pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
 
 fn contains_join_or_setop(plan: &LogicalPlan) -> bool {
     match plan {
-        LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => true,
+        // `Window` appends columns after the input's, which the projection
+        // pass's index remapping doesn't model — skip it like joins.
+        LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::Window { .. } => true,
         LogicalPlan::Scan { .. } => false,
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Sort { input, .. }
@@ -93,6 +95,10 @@ fn push_down_predicates(plan: LogicalPlan) -> LogicalPlan {
         },
         LogicalPlan::Distinct { input } => LogicalPlan::Distinct {
             input: Box::new(push_down_predicates(*input)),
+        },
+        LogicalPlan::Window { input, windows } => LogicalPlan::Window {
+            input: Box::new(push_down_predicates(*input)),
+            windows,
         },
         LogicalPlan::Limit { input, skip, fetch } => LogicalPlan::Limit {
             input: Box::new(push_down_predicates(*input)),
@@ -187,7 +193,10 @@ fn push_down_projection(plan: LogicalPlan) -> LogicalPlan {
 
 fn subtree_has_aggregate(plan: &LogicalPlan) -> bool {
     match plan {
-        LogicalPlan::Scan { .. } | LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => false,
+        LogicalPlan::Scan { .. }
+        | LogicalPlan::Join { .. }
+        | LogicalPlan::SetOp { .. }
+        | LogicalPlan::Window { .. } => false,
         LogicalPlan::Aggregate { .. } => true,
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Sort { input, .. }
@@ -203,7 +212,10 @@ fn collect_needed_columns(plan: &LogicalPlan, needed: &mut BTreeSet<usize>) {
         // anywhere in the plan (see its doc comment) — projection pushdown's
         // single flat index space doesn't hold once two subtrees have been
         // concatenated.
-        LogicalPlan::Scan { .. } | LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => {}
+        LogicalPlan::Scan { .. }
+        | LogicalPlan::Join { .. }
+        | LogicalPlan::SetOp { .. }
+        | LogicalPlan::Window { .. } => {}
         LogicalPlan::Aggregate {
             input,
             group_by,
@@ -296,6 +308,8 @@ fn collect_expr_columns(expr: &PlanExpr, needed: &mut BTreeSet<usize>) {
 
 fn rewrite(plan: LogicalPlan, indices: &[usize], remap: &HashMap<usize, usize>) -> LogicalPlan {
     match plan {
+        // Never reached: `optimize` skips this pass for plans with a `Window`.
+        plan @ LogicalPlan::Window { .. } => plan,
         LogicalPlan::Scan {
             table_name,
             source,

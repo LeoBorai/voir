@@ -124,6 +124,13 @@ pub enum Expr {
         args: Vec<Expr>,
         distinct: bool,
     },
+    /// `<func>(<args>) OVER ([PARTITION BY ...] [ORDER BY ...])`.
+    Window {
+        name: String,
+        args: Vec<Expr>,
+        partition_by: Vec<Expr>,
+        order_by: Vec<OrderByExpr>,
+    },
     Case {
         operand: Option<Box<Expr>>,
         branches: Vec<(Expr, Expr)>,
