@@ -10,7 +10,7 @@ use voir_types::{DataType, SchemaRef, Value, VoirError};
 
 use crate::agg::{AggExpr, AggFunc, agg_func_from_name};
 use crate::expr::{PlanExpr, ScalarFunc};
-use crate::logical::{LogicalPlan, SortKey};
+use crate::logical::{LogicalPlan, SortKey, WindowExpr};
 use crate::scope::Scope;
 
 /// Case-insensitive CTE name -> its (still-unbound) query. Queries are
@@ -165,8 +165,21 @@ impl<'a> Binder<'a> {
             plan = binding.plan;
             (binding.select_exprs, binding.having, binding.order_keys)
         } else {
-            let select_exprs =
-                self.bind_select_list(&select.projection, &scope, ctes, resolving)?;
+            let mut windows = Vec::new();
+            let select_exprs = self.bind_select_list(
+                &select.projection,
+                &scope,
+                &plan,
+                &mut windows,
+                ctes,
+                resolving,
+            )?;
+            if !windows.is_empty() {
+                plan = LogicalPlan::Window {
+                    input: Box::new(plan),
+                    windows,
+                };
+            }
             let order_keys =
                 self.bind_order_by_plain(order_by, &select_exprs, &scope, ctes, resolving)?;
             (select_exprs, None, order_keys)
@@ -313,19 +326,71 @@ impl<'a> Binder<'a> {
         })
     }
 
+    /// Window functions are only accepted as a whole select item; each one
+    /// is appended to `windows` and referenced by the column `Window` will
+    /// add after `input`'s own columns.
+    #[allow(clippy::too_many_arguments)]
     fn bind_select_list(
         &self,
         items: &[SelectItem],
         scope: &Scope,
+        input: &LogicalPlan,
+        windows: &mut Vec<WindowExpr>,
         ctes: &CteEnv,
         resolving: &mut Vec<String>,
     ) -> Result<Vec<(PlanExpr, String)>, VoirError> {
+        let input_width = input.schema().fields.len();
         let mut exprs = Vec::new();
         for item in items {
             match item {
                 SelectItem::Wildcard => exprs.extend(scope.wildcard(None)?),
                 SelectItem::QualifiedWildcard(table) => {
                     exprs.extend(scope.wildcard(Some(table))?);
+                }
+                SelectItem::Expr {
+                    expr:
+                        Expr::Window {
+                            name: func,
+                            args,
+                            partition_by,
+                            order_by,
+                        },
+                    alias,
+                } => {
+                    if !func.eq_ignore_ascii_case("row_number") {
+                        return Err(VoirError::Plan(format!(
+                            "unsupported window function \"{func}\" (only row_number is available)"
+                        )));
+                    }
+                    if !args.is_empty() {
+                        return Err(VoirError::Plan("row_number() takes no arguments".into()));
+                    }
+                    let name = alias.clone().unwrap_or_else(|| "row_number".to_string());
+                    let partition_by = partition_by
+                        .iter()
+                        .map(|e| self.bind_expr(e, scope, ctes, resolving))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let order_by = order_by
+                        .iter()
+                        .map(|o| {
+                            Ok(SortKey {
+                                expr: self.bind_expr(&o.expr, scope, ctes, resolving)?,
+                                desc: o.desc,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, VoirError>>()?;
+                    exprs.push((
+                        PlanExpr::Column {
+                            index: input_width + windows.len(),
+                            name: name.clone(),
+                        },
+                        name.clone(),
+                    ));
+                    windows.push(WindowExpr {
+                        name,
+                        partition_by,
+                        order_by,
+                    });
                 }
                 SelectItem::Expr { expr, alias } => {
                     let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
@@ -523,6 +588,7 @@ impl<'a> Binder<'a> {
             });
         }
         match expr {
+            Expr::Window { .. } => Err(window_position_error()),
             Expr::Function {
                 name,
                 args,
@@ -827,6 +893,7 @@ impl<'a> Binder<'a> {
             Expr::Wildcard => Err(VoirError::Plan(
                 "'*' is only valid inside COUNT(...)".into(),
             )),
+            Expr::Window { .. } => Err(window_position_error()),
             Expr::UnaryOp { op, expr } => Ok(PlanExpr::UnaryOp {
                 op: *op,
                 expr: Box::new(self.bind_expr(expr, scope, ctes, resolving)?),
@@ -997,6 +1064,7 @@ fn contains_aggregate(expr: &Expr) -> bool {
         | Expr::CompoundIdent(_, _)
         | Expr::Literal(_)
         | Expr::Wildcard
+        | Expr::Window { .. }
         | Expr::Exists { .. }
         | Expr::ScalarSubquery(_) => false,
     }
@@ -1079,6 +1147,14 @@ fn table_name_from_path(path: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or(path)
         .to_string()
+}
+
+fn window_position_error() -> VoirError {
+    VoirError::Plan(
+        "window functions are only allowed as a whole item of the SELECT list \
+         of a query without GROUP BY or aggregates"
+            .into(),
+    )
 }
 
 #[cfg(test)]

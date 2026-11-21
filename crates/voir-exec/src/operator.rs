@@ -187,6 +187,14 @@ pub fn build(plan: &LogicalPlan) -> Result<Box<dyn Operator>, VoirError> {
             let input_op = build(input)?;
             Ok(Box::new(DistinctOperator::new(input_op)))
         }
+        LogicalPlan::Window { input, windows } => {
+            let input_op = build(input)?;
+            Ok(Box::new(crate::window::WindowOperator::new(
+                input_op,
+                plan.schema(),
+                windows,
+            )?))
+        }
         LogicalPlan::Limit { input, skip, fetch } => {
             let input_op = build(input)?;
             Ok(Box::new(LimitOperator {

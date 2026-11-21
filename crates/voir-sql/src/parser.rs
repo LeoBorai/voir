@@ -881,12 +881,48 @@ fn parse_function_call(input: Input<'_>, name: String) -> Result<(Input<'_>, Exp
     };
 
     let (input, _) = expect(input, &TokenKind::RParen, "')'")?;
+    if is_word(input, 0, "over") {
+        let (input, _) = advance(input);
+        return parse_window_spec(input, name, args);
+    }
     Ok((
         input,
         Expr::Function {
             name,
             args,
             distinct,
+        },
+    ))
+}
+
+fn parse_window_spec(
+    input: Input<'_>,
+    name: String,
+    args: Vec<Expr>,
+) -> Result<(Input<'_>, Expr), VoirError> {
+    let (input, _) = expect(input, &TokenKind::LParen, "'('")?;
+    let (input, partition_by) = if is_word(input, 0, "partition") {
+        let (input, _) = advance(input);
+        let (input, _) = expect(input, &TokenKind::By, "BY")?;
+        parse_expr_list(input)?
+    } else {
+        (input, Vec::new())
+    };
+    let (input, has_order) = opt_token(input, TokenKind::Order);
+    let (input, order_by) = if has_order {
+        let (input, _) = expect(input, &TokenKind::By, "BY")?;
+        parse_order_by_list(input)?
+    } else {
+        (input, Vec::new())
+    };
+    let (input, _) = expect(input, &TokenKind::RParen, "')'")?;
+    Ok((
+        input,
+        Expr::Window {
+            name,
+            args,
+            partition_by,
+            order_by,
         },
     ))
 }
@@ -1547,8 +1583,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_create_table_as_with_table_function() {
-        let stmt = parse("CREATE TABLE v AS SELECT a, v.* FROM read_json('x.json')").unwrap();
+    fn parses_create_table_as_with_window_and_table_function() {
+        let stmt = parse(
+            "CREATE TABLE v AS SELECT row_number() OVER (PARTITION BY a ORDER BY b DESC) AS n, \
+             v.* FROM read_json('x.json')",
+        )
+        .unwrap();
         let Statement::CreateTableAs { name, query } = stmt else {
             panic!("expected CREATE TABLE AS")
         };
@@ -1565,7 +1605,8 @@ mod tests {
         );
         assert!(matches!(
             &select.projection[0],
-            SelectItem::Expr { expr: Expr::Ident(n), .. } if n == "a"
+            SelectItem::Expr { expr: Expr::Window { partition_by, order_by, .. }, .. }
+                if partition_by.len() == 1 && order_by.len() == 1 && order_by[0].desc
         ));
         assert_eq!(
             select.projection[1],

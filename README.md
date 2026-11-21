@@ -92,6 +92,7 @@ Meta-commands (psql-style, backslash-prefixed so they never collide with SQL):
   table for the rest of the session (not kept by `\save`). Tables, files and
   table functions like `read_json('file.json')` all work in `FROM`; the
   function name is ignored and the file extension picks the reader.
+- `row_number() OVER ([PARTITION BY ...] [ORDER BY ...])` as a `SELECT` item.
 
 See `plan.md` for the full roadmap (joins, subqueries, additional formats).
 

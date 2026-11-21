@@ -9,7 +9,7 @@ use crate::operator::Operator;
 /// `NULL` sorts as greater than everything, matching Postgres's default
 /// (`NULLS LAST` ascending, `NULLS FIRST` descending — the latter falls out
 /// naturally from negating the comparison for `DESC`).
-fn compare_values(a: &Value, b: &Value) -> Ordering {
+pub(crate) fn compare_values(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Null, Value::Null) => Ordering::Equal,
         (Value::Null, _) => Ordering::Greater,

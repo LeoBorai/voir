@@ -441,6 +441,27 @@ fn scalar_functions() {
 }
 
 #[test]
+fn row_number_partitions_and_orders() {
+    let path = testdata("sales.csv");
+    let output = voir()
+        .args(["--format", "csv"])
+        .arg(format!(
+            "SELECT row_number() OVER (PARTITION BY region ORDER BY amount DESC) AS rn, \
+             region, amount FROM '{path}'"
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("rn,region,amount"), "{stdout}");
+    assert!(stdout.contains("1,APAC,102.25"), "{stdout}");
+}
+
+#[test]
 fn exit_stops_a_script() {
     use std::io::Write;
     use std::process::Stdio;
