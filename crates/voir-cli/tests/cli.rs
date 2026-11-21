@@ -494,3 +494,37 @@ fn table_header_shows_types_and_settings_file_is_created() {
             .contains("colors = true")
     );
 }
+
+#[test]
+fn create_table_as_materializes_a_query() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let script = format!(
+        "CREATE TABLE eu AS SELECT region, amount FROM '{}' WHERE region = 'EU';\n\
+         SELECT COUNT(*) AS n FROM eu;",
+        testdata("sales.csv")
+    );
+    let mut child = voir()
+        .args(["--format", "csv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("created table \"eu\""), "{stdout}");
+    assert!(stdout.contains("n\n3"), "{stdout}");
+}

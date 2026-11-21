@@ -2,6 +2,12 @@
 pub enum Statement {
     Query(Box<Query>),
     Explain(Box<Query>),
+    /// `CREATE TABLE <name> AS <query>`: the result is materialized in memory
+    /// and registered as a named table.
+    CreateTableAs {
+        name: String,
+        query: Box<Query>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

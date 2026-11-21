@@ -40,7 +40,7 @@ impl<'a> Binder<'a> {
         let ctes = CteEnv::new();
         let mut resolving = Vec::new();
         match statement {
-            Statement::Query(query) => {
+            Statement::Query(query) | Statement::CreateTableAs { query, .. } => {
                 Ok((self.bind_query(query, &ctes, &mut resolving)?.0, false))
             }
             Statement::Explain(query) => {

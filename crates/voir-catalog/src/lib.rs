@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use voir_types::{Batch, SchemaRef, VoirError};
+use voir_types::{Batch, Row, SchemaRef, VoirError};
 
 mod filter;
 
@@ -81,6 +81,9 @@ impl SourceRegistry {
 pub struct RegisteredTable {
     pub path: PathBuf,
     pub provider: Arc<dyn TableProvider>,
+    /// Created by `CREATE TABLE ... AS`: lives only in memory, has no
+    /// backing file to re-open.
+    pub in_memory: bool,
 }
 
 /// Named tables layered over a `SourceRegistry`. A `FROM` reference that
@@ -104,7 +107,24 @@ impl Catalog {
     pub fn register_table(&mut self, name: &str, path: PathBuf, provider: Arc<dyn TableProvider>) {
         self.tables.insert(
             name.to_ascii_lowercase(),
-            RegisteredTable { path, provider },
+            RegisteredTable {
+                path,
+                provider,
+                in_memory: false,
+            },
+        );
+    }
+
+    /// Registers a table materialized by `CREATE TABLE ... AS`, replacing any
+    /// table of the same name.
+    pub fn register_memory_table(&mut self, name: &str, provider: Arc<dyn TableProvider>) {
+        self.tables.insert(
+            name.to_ascii_lowercase(),
+            RegisteredTable {
+                path: PathBuf::from("(memory)"),
+                provider,
+                in_memory: true,
+            },
         );
     }
 
@@ -130,5 +150,74 @@ impl Catalog {
             return Ok(table.provider.clone());
         }
         self.registry.resolve(Path::new(reference))
+    }
+}
+
+/// A fully materialized table, e.g. the result of `CREATE TABLE ... AS`.
+pub struct MemTable {
+    schema: SchemaRef,
+    rows: Arc<Vec<Row>>,
+}
+
+impl MemTable {
+    #[must_use]
+    pub fn new(schema: SchemaRef, rows: Vec<Row>) -> Self {
+        Self {
+            schema,
+            rows: Arc::new(rows),
+        }
+    }
+}
+
+impl TableProvider for MemTable {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn scan(
+        &self,
+        projection: Option<&[usize]>,
+        _filters: &[FilterExpr],
+    ) -> Result<Box<dyn BatchStream>, VoirError> {
+        let schema = match projection {
+            None => self.schema.clone(),
+            Some(indices) => Arc::new(voir_types::Schema::new(
+                indices
+                    .iter()
+                    .map(|&i| self.schema.fields[i].clone())
+                    .collect(),
+            )),
+        };
+        Ok(Box::new(MemStream {
+            rows: self.rows.clone(),
+            schema,
+            projection: projection.map(<[usize]>::to_vec),
+            pos: 0,
+        }))
+    }
+}
+
+struct MemStream {
+    rows: Arc<Vec<Row>>,
+    schema: SchemaRef,
+    projection: Option<Vec<usize>>,
+    pos: usize,
+}
+
+impl BatchStream for MemStream {
+    fn next_batch(&mut self) -> Result<Option<Batch>, VoirError> {
+        let end = (self.pos + Batch::MAX_ROWS).min(self.rows.len());
+        if self.pos >= end {
+            return Ok(None);
+        }
+        let rows = self.rows[self.pos..end]
+            .iter()
+            .map(|row| match &self.projection {
+                None => row.clone(),
+                Some(indices) => Row(indices.iter().map(|&i| row.0[i].clone()).collect()),
+            })
+            .collect();
+        self.pos = end;
+        Ok(Some(Batch::new(self.schema.clone(), rows)))
     }
 }
