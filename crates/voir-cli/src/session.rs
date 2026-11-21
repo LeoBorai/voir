@@ -5,12 +5,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use comfy_table::Table;
-use voir_catalog::{Catalog, SourceRegistry, TableProvider};
+use voir_catalog::{Catalog, MemTable, SourceRegistry, TableProvider};
 use voir_plan::{Binder, optimize};
 use voir_source_bson::BsonTableProvider;
 use voir_source_csv::CsvTableProvider;
 use voir_source_json::JsonTableProvider;
-use voir_types::VoirError;
+use voir_sql::Statement;
+use voir_types::{Row, VoirError};
 
 use crate::diagnostics;
 use crate::format::{self, OutputFormat};
@@ -95,6 +96,9 @@ impl Session {
 
     fn run_query(&mut self, sql: &str) -> Result<(), VoirError> {
         let statement = voir_sql::parse(sql)?;
+        if let Statement::CreateTableAs { name, .. } = &statement {
+            return self.create_table_as(name, &statement);
+        }
         let (logical_plan, is_explain_stmt) = Binder::new(&self.catalog).bind(&statement)?;
         let logical_plan = optimize(logical_plan);
 
@@ -112,6 +116,30 @@ impl Session {
             writer.write_batch(&batch)?;
         }
         writer.finish()
+    }
+
+    /// Runs the statement's query to completion and registers the rows as an
+    /// in-memory table. Nothing is registered if the query fails.
+    fn create_table_as(&mut self, name: &str, statement: &Statement) -> Result<(), VoirError> {
+        if self.catalog.table(name).is_some() {
+            return Err(VoirError::Plan(format!("table \"{name}\" already exists")));
+        }
+        let (logical_plan, _) = Binder::new(&self.catalog).bind(statement)?;
+        let logical_plan = optimize(logical_plan);
+        if self.explain {
+            print!("{logical_plan}");
+        }
+        let schema = logical_plan.schema();
+        let mut operator = voir_exec::build(&logical_plan)?;
+        let mut rows: Vec<Row> = Vec::new();
+        while let Some(batch) = operator.next_batch()? {
+            rows.extend(batch.rows);
+        }
+        let count = rows.len();
+        self.catalog
+            .register_memory_table(name, Arc::new(MemTable::new(schema, rows)));
+        println!("created table \"{name}\" ({count} rows)");
+        Ok(())
     }
 
     pub fn cmd_open(&mut self, args: &str) {
@@ -227,7 +255,12 @@ impl Session {
             eprintln!("usage: \\save <file>");
             return;
         }
-        let mut rows: Vec<_> = self.catalog.tables().collect();
+        // In-memory tables have no file to re-open on `\load`.
+        let mut rows: Vec<_> = self
+            .catalog
+            .tables()
+            .filter(|(_, r)| !r.in_memory)
+            .collect();
         rows.sort_by(|a, b| a.0.cmp(b.0));
         let tables: Vec<serde_json::Value> = rows
             .into_iter()
