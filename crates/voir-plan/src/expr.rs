@@ -79,6 +79,10 @@ pub enum ScalarFunc {
     Mod,
     Coalesce,
     NullIf,
+    /// `json_extract(text, 'key', 'TypeName')`: reads one key out of a JSON
+    /// object held as text. Produced by `<column>.*` expansion, not callable
+    /// from SQL.
+    JsonExtract,
 }
 
 impl ScalarFunc {
@@ -119,6 +123,7 @@ impl ScalarFunc {
             | Self::Sqrt => argc == 1,
             Self::Round => argc == 1 || argc == 2,
             Self::Power | Self::Mod | Self::NullIf => argc == 2,
+            Self::JsonExtract => argc == 3,
             Self::Concat | Self::Coalesce => argc >= 1,
         };
         if ok {
@@ -145,6 +150,7 @@ impl ScalarFunc {
             Self::Mod => "mod",
             Self::Coalesce => "coalesce",
             Self::NullIf => "nullif",
+            Self::JsonExtract => "json_extract",
         }
     }
 
@@ -159,6 +165,15 @@ impl ScalarFunc {
             Self::Round | Self::Ceil | Self::Floor | Self::Power | Self::Sqrt | Self::Mod => {
                 DataType::Float64
             }
+            Self::JsonExtract => match args.get(2) {
+                Some(PlanExpr::Literal(Value::Utf8(t))) => match &**t {
+                    "Int64" => DataType::Int64,
+                    "Float64" => DataType::Float64,
+                    "Boolean" => DataType::Boolean,
+                    _ => DataType::Utf8,
+                },
+                _ => DataType::Utf8,
+            },
             Self::Coalesce | Self::NullIf => args
                 .first()
                 .map_or(DataType::Null, |a| a.infer_type(schema)),

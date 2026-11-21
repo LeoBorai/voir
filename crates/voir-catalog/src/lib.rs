@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use voir_types::{Batch, Row, SchemaRef, VoirError};
+use voir_types::{Batch, DataType, Field, Row, SchemaRef, Value, VoirError};
 
 mod filter;
 
@@ -23,6 +23,13 @@ pub trait TableProvider: Send + Sync {
         projection: Option<&[usize]>,
         filters: &[FilterExpr],
     ) -> Result<Box<dyn BatchStream>, VoirError>;
+
+    /// For a column holding nested objects (e.g. a JSON object), the fields
+    /// found inside it, in first-seen order. `None` when the column has no
+    /// known structure. Powers `<column>.*` expansion.
+    fn nested_fields(&self, _column: usize) -> Option<Vec<Field>> {
+        None
+    }
 }
 
 pub trait BatchStream: Send {
@@ -174,6 +181,20 @@ impl TableProvider for MemTable {
         self.schema.clone()
     }
 
+    fn nested_fields(&self, column: usize) -> Option<Vec<Field>> {
+        let parsed: Vec<serde_json::Value> = self
+            .rows
+            .iter()
+            .filter_map(|row| match row.0.get(column) {
+                Some(Value::Utf8(s)) if s.trim_start().starts_with('{') => {
+                    serde_json::from_str(s).ok()
+                }
+                _ => None,
+            })
+            .collect();
+        infer_object_fields(parsed.iter().filter_map(serde_json::Value::as_object))
+    }
+
     fn scan(
         &self,
         projection: Option<&[usize]>,
@@ -220,4 +241,54 @@ impl BatchStream for MemStream {
         self.pos = end;
         Ok(Some(Batch::new(self.schema.clone(), rows)))
     }
+}
+
+/// Infers the fields of a column holding JSON objects: the union of keys in
+/// first-seen order, each typed by widening over the values seen. `None` if
+/// no object was seen. Shared by every provider whose nested values are JSON.
+pub fn infer_object_fields<'a>(
+    objects: impl IntoIterator<Item = &'a serde_json::Map<String, serde_json::Value>>,
+) -> Option<Vec<Field>> {
+    use serde_json::Value as Json;
+    let mut fields: Vec<(String, Option<DataType>, bool)> = Vec::new();
+    let mut seen = false;
+    for obj in objects {
+        seen = true;
+        for (key, value) in obj {
+            let pos = fields
+                .iter()
+                .position(|(n, _, _)| n == key)
+                .unwrap_or_else(|| {
+                    fields.push((key.clone(), None, false));
+                    fields.len() - 1
+                });
+            let entry = &mut fields[pos];
+            let t = match value {
+                Json::Null => {
+                    entry.2 = true;
+                    continue;
+                }
+                Json::Bool(_) => DataType::Boolean,
+                Json::Number(n) if n.is_i64() => DataType::Int64,
+                Json::Number(_) => DataType::Float64,
+                _ => DataType::Utf8,
+            };
+            entry.1 = Some(match entry.1 {
+                None => t,
+                Some(c) if c == t => c,
+                Some(DataType::Int64 | DataType::Float64)
+                    if matches!(t, DataType::Int64 | DataType::Float64) =>
+                {
+                    DataType::Float64
+                }
+                Some(_) => DataType::Utf8,
+            });
+        }
+    }
+    seen.then(|| {
+        fields
+            .into_iter()
+            .map(|(n, t, nullable)| Field::new(n, t.unwrap_or(DataType::Utf8), nullable))
+            .collect()
+    })
 }

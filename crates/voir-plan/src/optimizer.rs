@@ -34,12 +34,28 @@ fn contains_join_or_setop(plan: &LogicalPlan) -> bool {
         // pass's index remapping doesn't model — skip it like joins.
         LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } | LogicalPlan::Window { .. } => true,
         LogicalPlan::Scan { .. } => false,
+        // A projection over another projection (derived table) has two
+        // index spaces too, so the single-space remap would corrupt it.
+        LogicalPlan::Projection { input, .. } if contains_projection(input) => true,
         LogicalPlan::Filter { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Projection { input, .. }
         | LogicalPlan::Distinct { input }
         | LogicalPlan::Limit { input, .. }
         | LogicalPlan::Aggregate { input, .. } => contains_join_or_setop(input),
+    }
+}
+
+fn contains_projection(plan: &LogicalPlan) -> bool {
+    match plan {
+        LogicalPlan::Projection { .. } => true,
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::Aggregate { input, .. } => contains_projection(input),
+        LogicalPlan::Scan { .. } | LogicalPlan::Join { .. } | LogicalPlan::SetOp { .. } => false,
     }
 }
 

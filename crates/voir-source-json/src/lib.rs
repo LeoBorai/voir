@@ -87,6 +87,15 @@ impl TableProvider for JsonTableProvider {
         self.schema.clone()
     }
 
+    fn nested_fields(&self, column: usize) -> Option<Vec<Field>> {
+        voir_catalog::infer_object_fields(self.rows.iter().filter_map(
+            |row| match row.get(column) {
+                Some(Json::Object(obj)) => Some(obj),
+                _ => None,
+            },
+        ))
+    }
+
     // No index to consult: filters are returned unapplied for the engine's
     // Filter operator.
     fn scan(

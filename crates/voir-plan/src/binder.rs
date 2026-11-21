@@ -344,9 +344,13 @@ impl<'a> Binder<'a> {
         for item in items {
             match item {
                 SelectItem::Wildcard => exprs.extend(scope.wildcard(None)?),
-                SelectItem::QualifiedWildcard(table) => {
-                    exprs.extend(scope.wildcard(Some(table))?);
-                }
+                SelectItem::QualifiedWildcard(table) => match scope.wildcard(Some(table)) {
+                    Ok(items) => exprs.extend(items),
+                    Err(err) => match expand_nested_wildcard(table, scope, input) {
+                        Some(items) => exprs.extend(items),
+                        None => return Err(err),
+                    },
+                },
                 SelectItem::Expr {
                     expr:
                         Expr::Window {
@@ -391,6 +395,32 @@ impl<'a> Binder<'a> {
                         partition_by,
                         order_by,
                     });
+                }
+                SelectItem::Expr {
+                    expr: Expr::Function { name, args, .. },
+                    alias,
+                } if name.eq_ignore_ascii_case("parse_json") => {
+                    if alias.is_some() {
+                        return Err(VoirError::Plan(
+                            "parse_json() expands to one column per field and cannot take an alias"
+                                .into(),
+                        ));
+                    }
+                    let [arg @ (Expr::Ident(_) | Expr::CompoundIdent(..))] = args.as_slice() else {
+                        return Err(VoirError::Plan(
+                            "parse_json() takes exactly one column reference".into(),
+                        ));
+                    };
+                    let col = self.bind_expr(arg, scope, ctes, resolving)?;
+                    let display = display_expr_name(arg);
+                    match expand_nested_column(&col, input) {
+                        Some(items) => exprs.extend(items),
+                        None => {
+                            return Err(VoirError::Plan(format!(
+                                "parse_json({display}): column holds no JSON objects"
+                            )));
+                        }
+                    }
                 }
                 SelectItem::Expr { expr, alias } => {
                     let name = alias.clone().unwrap_or_else(|| display_expr_name(expr));
@@ -939,6 +969,11 @@ impl<'a> Binder<'a> {
                         "aggregate function \"{name}\" requires GROUP BY (or must be used in HAVING)"
                     )));
                 }
+                if lower == "parse_json" {
+                    return Err(VoirError::Plan(
+                        "parse_json() is only allowed as a SELECT item".into(),
+                    ));
+                }
                 let func = ScalarFunc::from_name(&lower)
                     .ok_or_else(|| VoirError::Plan(format!("unknown function \"{name}\"")))?;
                 let bound_args = args
@@ -1155,6 +1190,78 @@ fn window_position_error() -> VoirError {
          of a query without GROUP BY or aggregates"
             .into(),
     )
+}
+
+/// Expands `<column>.*` when `<column>` is not a table alias but a column
+/// holding nested objects the source knows the shape of: one `json_extract`
+/// per key. Looks through plan nodes that keep the input's column layout.
+fn expand_nested_wildcard(
+    column: &str,
+    scope: &Scope,
+    input: &LogicalPlan,
+) -> Option<Vec<(PlanExpr, String)>> {
+    let col_expr = scope.resolve(None, column).ok()?;
+    expand_nested_column(&col_expr, input)
+}
+
+fn expand_nested_column(
+    col_expr: &PlanExpr,
+    input: &LogicalPlan,
+) -> Option<Vec<(PlanExpr, String)>> {
+    let PlanExpr::Column { index, .. } = col_expr else {
+        return None;
+    };
+    let fields = nested_fields_of(input, *index)?;
+    Some(
+        fields
+            .into_iter()
+            .map(|f| {
+                let expr = PlanExpr::Function {
+                    func: ScalarFunc::JsonExtract,
+                    args: vec![
+                        col_expr.clone(),
+                        PlanExpr::Literal(Value::utf8(f.name.as_str())),
+                        PlanExpr::Literal(Value::utf8(format!("{:?}", f.data_type))),
+                    ],
+                };
+                (expr, f.name)
+            })
+            .collect(),
+    )
+}
+
+fn nested_fields_of(plan: &LogicalPlan, index: usize) -> Option<Vec<voir_types::Field>> {
+    match plan {
+        LogicalPlan::Scan {
+            source, projection, ..
+        } => {
+            let source_index = match projection {
+                None => index,
+                Some(indices) => *indices.get(index)?,
+            };
+            source.nested_fields(source_index)
+        }
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Distinct { input }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Window { input, .. } => nested_fields_of(input, index),
+        // Only a plain column pass-through keeps the nested structure.
+        LogicalPlan::Projection { input, exprs } => match &exprs.get(index)?.0 {
+            PlanExpr::Column { index: inner, .. } => nested_fields_of(input, *inner),
+            _ => None,
+        },
+        LogicalPlan::Join { left, right, .. } => {
+            let left_width = left.schema().fields.len();
+            if index < left_width {
+                nested_fields_of(left, index)
+            } else {
+                nested_fields_of(right, index - left_width)
+            }
+        }
+        LogicalPlan::SetOp { left, .. } => nested_fields_of(left, index),
+        LogicalPlan::Aggregate { .. } => None,
+    }
 }
 
 #[cfg(test)]

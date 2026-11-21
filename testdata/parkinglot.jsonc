@@ -1,0 +1,51 @@
+// sales
+[
+  {
+    "floor": 1,
+    "slot": 1,
+    "vehicle": {
+      "model": "Corolla",
+      "make": "Toyota",
+      "engine": 5.1,
+      "plate_number": "123ABC",
+    },
+  },
+  {
+    "floor": 1,
+    "slot": 1,
+    "vehicle": [
+      {
+        "model": "Ninja",
+        "make": "Kawasaki",
+        "engine": null,
+        "plate_number": "3ABC1",
+      },
+      {
+        "model": "Ninja",
+        "make": "Kawasaki",
+        "engine": null,
+        "plate_number": "2ABC1",
+      },
+    ],
+  },
+  {
+    "floor": 1,
+    "slot": 2,
+    "vehicle": {
+      "model": "Explorer",
+      "make": "Ford",
+      "engine": 4.8,
+      "plate_number": "ABC123",
+    },
+  },
+  {
+    "floor": 2,
+    "slot": 10,
+    "vehicle": {
+      "model": "Mustang",
+      "make": "Ford",
+      "engine": 8.2,
+      "plate_number": "AB123C",
+    },
+  },
+]

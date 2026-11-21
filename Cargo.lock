@@ -1347,6 +1347,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voir-catalog"
 version = "0.0.3"
 dependencies = [
+ "serde_json",
  "voir-types",
 ]
 
@@ -1378,6 +1379,7 @@ dependencies = [
 name = "voir-exec"
 version = "0.0.3"
 dependencies = [
+ "serde_json",
  "voir-catalog",
  "voir-plan",
  "voir-sql",
@@ -1398,6 +1400,7 @@ name = "voir-source-bson"
 version = "0.0.3"
 dependencies = [
  "bson",
+ "serde_json",
  "tempfile",
  "voir-catalog",
  "voir-types",

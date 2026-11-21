@@ -13,6 +13,7 @@ voir-types.workspace = true
 voir-sql.workspace = true
 voir-catalog.workspace = true
 voir-plan.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
